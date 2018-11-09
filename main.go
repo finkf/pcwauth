@@ -284,7 +284,7 @@ func apiAuth(f apifunc) apifunc {
 			return nil, err
 		}
 		r.s = val.(session.Session)
-		log.Infof("user %s authenticated with %q", r.s.User, r.s.Auth)
+		log.Infof("user %s authenticated with: %s", r.s.User, r.s.Auth)
 		return f(r)
 	}
 }

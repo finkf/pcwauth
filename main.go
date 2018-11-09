@@ -124,8 +124,8 @@ func main() {
 			forwardPostRequest,
 			forwardDeleteRequest))))))))
 	// misc
-	http.HandleFunc("/api-version", logURL(apih(cached(
-		apiGet(forwardGetRequest)))))
+	http.HandleFunc("/api-version", apih(cached(
+		apiGet(forwardGetRequest))))
 	http.HandleFunc("/profiler-languages", logURL(apih(cached(
 		apiGet(forwardGetRequest)))))
 

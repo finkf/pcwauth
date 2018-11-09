@@ -408,7 +408,7 @@ func postLogin(r *request) (interface{}, error) {
 
 func getLogin(r *request) (interface{}, error) {
 	log.Debugf("session: %s", r.s)
-	return r.s, nil
+	return r.s.User, nil
 }
 
 func getUser(r *request) (interface{}, error) {

@@ -65,23 +65,16 @@ func dbConnectionString() string {
 	return dbuser + ":" + dbpass + "@(" + dbhost + ")/" + dbname
 }
 
-func setupDatabase() {
+func setupDatabase() error {
 	var err error
 	db, err = sql.Open("mysql", "pocoweb:pocoweb1998@(172.18.0.1)/pocoweb")
-	must(err)
-	//	must(db.Ping())
-	must(user.CreateTable(db))
-	must(session.CreateTable(db))
-	must(project.CreateTable(db))
-	_, found, _ := user.FindByEmail(db, root.Email)
-	if !found {
-		root, err = user.New(db, user.User{
-			Name:  "root",
-			Email: "root@example.com",
-			Admin: true})
-		must(err)
-		must(user.SetUserPassword(db, root, "password"))
+	if err != nil {
+		return err
 	}
+	db.SetMaxOpenConns(100)
+	db.SetConnMaxLifetime(100)
+	db.SetMaxIdleConns(10)
+	return nil
 }
 
 func setupLogging() {
@@ -93,12 +86,8 @@ func setupLogging() {
 func main() {
 	flag.Parse()
 	setupLogging()
-	defer func() {
-		if db != nil {
-			db.Close()
-		}
-	}()
-	setupDatabase()
+	must(setupDatabase())
+	defer db.Close()
 	// login
 	http.HandleFunc(api.LoginURL, logURL(apih(apiGetPost(
 		apiAuth(getLogin),

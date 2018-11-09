@@ -38,7 +38,7 @@ func loadSessionAuthToken(token interface{}) (interface{}, *time.Duration, error
 		return nil, nil, err
 	}
 	if !found {
-		return nil, nil, forbidden("cannot find auth-token: %q", str)
+		return nil, nil, forbidden("cannot find auth-token: %s", str)
 	}
 	expire := time.Until(time.Unix(s.Expires, 0))
 	return s, &expire, nil

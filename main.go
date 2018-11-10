@@ -4,12 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/finkf/pcwgo/api"
 	"github.com/finkf/pcwgo/database"
@@ -556,8 +556,10 @@ func copyResponse(r io.Reader) (interface{}, error) {
 }
 
 func forwardURL(r *request) string {
-	if r.s.User.ID == 0 {
-		return pocoweb + r.r.URL.String()
+	url := r.r.URL.String()
+	i := strings.LastIndex(url, "?")
+	if i == -1 {
+		return pocoweb + url
 	}
-	return pocoweb + r.r.URL.String() + fmt.Sprintf("&userid=%d", r.s.User.ID)
+	return pocoweb + url[0:i] + "?userid=" + strconv.Itoa(int(r.s.User.ID))
 }

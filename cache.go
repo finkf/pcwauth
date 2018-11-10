@@ -88,7 +88,7 @@ func getAPICache(r *request, f apifunc) (interface{}, error) {
 	}
 	// not cached fetch and put into cache
 	if err == gcache.KeyNotFoundError {
-		log.Debugf("%s not cached; loading", url)
+		log.Debugf("not cached: %s", url)
 		val, err = f(r)
 		if err != nil {
 			return nil, err

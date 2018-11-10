@@ -559,5 +559,5 @@ func forwardURL(r *request) string {
 	if r.s.User.ID == 0 {
 		return pocoweb + r.r.URL.String()
 	}
-	return pocoweb + r.r.URL.String() + fmt.Sprintf("&userid=%d")
+	return pocoweb + r.r.URL.String() + fmt.Sprintf("&userid=%d", r.s.User.ID)
 }

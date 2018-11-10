@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -477,7 +478,7 @@ func deleteUser(r *request) (interface{}, error) {
 }
 
 func forwardGetRequest(r *request) (interface{}, error) {
-	url := pocoweb + r.r.URL.String()
+	url := forwardURL(r)
 	log.Debugf("forwarding request: GET %s", url)
 	res, err := http.Get(url)
 	if err != nil {
@@ -492,7 +493,7 @@ func forwardGetRequest(r *request) (interface{}, error) {
 }
 
 func forwardPostRequest(r *request) (interface{}, error) {
-	url := pocoweb + r.r.URL.String()
+	url := forwardURL(r)
 	log.Debugf("forwarding request: POST %s", url)
 	res, err := http.Post(url, r.r.Header.Get("Content-Type"), r.r.Body)
 	if err != nil {
@@ -507,7 +508,7 @@ func forwardPostRequest(r *request) (interface{}, error) {
 }
 
 func forwardDeleteRequest(r *request) (interface{}, error) {
-	url := pocoweb + r.r.URL.String()
+	url := forwardURL(r)
 	log.Debugf("forwarding request: DELETE %s", url)
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
@@ -552,4 +553,11 @@ func copyResponse(r io.Reader) (interface{}, error) {
 		return nil, internalServerError("cannot copy data: %v", err)
 	}
 	return data, nil
+}
+
+func forwardURL(r *request) string {
+	if r.s.User.ID == 0 {
+		return pocoweb + r.r.URL.String()
+	}
+	return pocoweb + r.r.URL.String() + fmt.Sprintf("&userid=%d")
 }

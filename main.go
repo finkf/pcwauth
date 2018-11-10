@@ -415,7 +415,8 @@ func getLogin(r *request) (interface{}, error) {
 func getUser(r *request) (interface{}, error) {
 	log.Debugf("get user: id: %d", r.id)
 	if r.id == 0 { // list all users (root only)
-		return user.All(db)
+		users, err := user.All(db)
+		return api.Users{Users: users}, err
 	}
 	// list self user
 	u, found, err := user.FindByID(db, r.id)

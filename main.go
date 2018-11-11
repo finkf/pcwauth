@@ -37,6 +37,7 @@ var (
 		Institute: "CIS",
 		Admin:     true,
 	}
+	version api.Version
 )
 
 func init() {
@@ -114,8 +115,7 @@ func main() {
 			forwardPostRequest,
 			forwardDeleteRequest))))))))
 	// misc
-	http.HandleFunc("/api-version", apih(cached(
-		apiGet(forwardGetRequest))))
+	http.HandleFunc("/api-version", apih(apiGet(getVersion)))
 	http.HandleFunc("/profiler-languages", logURL(apih(cached(
 		apiGet(forwardGetRequest)))))
 
@@ -524,6 +524,22 @@ func forwardDeleteRequest(r *request) (interface{}, error) {
 		return nil, errorFromCode(res.StatusCode, "bad response from backend")
 	}
 	return nil, nil
+}
+
+// just handle api-version once
+func getVersion(r *request) (interface{}, error) {
+	if version.Version == "" {
+		v, err := forwardGetRequest(r)
+		if err != nil {
+			return nil, err
+		}
+		xv, ok := v.(api.Version)
+		if !ok {
+			return nil, internalServerError("cannot get api-version: %s", err)
+		}
+		version = xv
+	}
+	return version, nil
 }
 
 //

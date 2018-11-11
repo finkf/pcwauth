@@ -1,6 +1,7 @@
 package main // import "github.com/finkf/pcwauth"
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -531,13 +532,11 @@ func getVersion(r *request) (interface{}, error) {
 	if version.Version == "" {
 		v, err := forwardGetRequest(r)
 		if err != nil {
-			return nil, err
+			return nil, internalServerError("cannot get api-version: %v", err)
 		}
-		xv, ok := v.(api.Version)
-		if !ok {
-			return nil, internalServerError("cannot get api-version: %s", err)
+		if err := json.NewDecoder(bytes.NewBuffer(v.([]byte))).Decode(&version); err != nil {
+			return nil, internalServerError("cannot read version: %v", err)
 		}
-		version = xv
 	}
 	return version, nil
 }

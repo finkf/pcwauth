@@ -103,7 +103,7 @@ func main() {
 	http.HandleFunc("/users", logURL(apih(apiAuth(onlyRoot(
 		apiGetPost(
 			getUser,
-			postUser))))))
+			withUser(postUser)))))))
 	http.HandleFunc("/users/", logURL(apih(apiAuth(withUserID(rootOrSelf(
 		apiGetPutDelete(
 			getUser,
@@ -448,10 +448,8 @@ func getUser(r *request) (interface{}, error) {
 }
 
 func postUser(r *request) (interface{}, error) {
-	data, ok := r.d.(api.CreateUserRequest)
-	if !ok {
-		return nil, badRequest("missing or invalid data")
-	}
+	// this must not fail
+	data := r.d.(api.CreateUserRequest)
 	err := transaction(func(db database.DB) error {
 		var err error
 		data.User, err = user.New(db, data.User)
@@ -471,10 +469,8 @@ func postUser(r *request) (interface{}, error) {
 }
 
 func putUser(r *request) (interface{}, error) {
-	data, ok := r.d.(api.CreateUserRequest)
-	if !ok {
-		return nil, badRequest("missing or invalid data")
-	}
+	// this must not fail
+	data := r.d.(api.CreateUserRequest)
 	err := transaction(func(db database.DB) error {
 		if err := user.UpdateUser(db, data.User); err != nil {
 			return err

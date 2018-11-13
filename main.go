@@ -365,6 +365,7 @@ func withUser(f apifunc) apifunc {
 		if err := json.NewDecoder(r.r.Body).Decode(&data); err != nil {
 			return nil, badRequest("invalid post data: %v", err)
 		}
+		log.Debugf("with user-data: %s", data.User)
 		r.d = data
 		return f(r)
 	}
@@ -430,8 +431,8 @@ func getLogout(r *request) (interface{}, error) {
 }
 
 func getUser(r *request) (interface{}, error) {
-	log.Debugf("get user: id: %d", r.id)
 	if r.id == 0 { // list all users (root only)
+		log.Debugf("get all users")
 		users, err := user.All(db)
 		return api.Users{Users: users}, err
 	}
@@ -444,6 +445,7 @@ func getUser(r *request) (interface{}, error) {
 	if !found {
 		return user.User{}, notFound("cannnot find user-id: %d", r.id)
 	}
+	log.Printf("get user: %s", u)
 	return u, nil
 }
 

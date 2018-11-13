@@ -488,7 +488,9 @@ func putUser(r *request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return data.User, nil
+	r.s.User = data.User
+	putAuthCache(r.s)
+	return r.s.User, nil
 }
 
 func deleteUser(r *request) (interface{}, error) {

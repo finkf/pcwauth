@@ -448,7 +448,10 @@ func getUser(r *request) (interface{}, error) {
 }
 
 func postUser(r *request) (interface{}, error) {
-	data := r.d.(api.CreateUserRequest)
+	data, ok := r.d.(api.CreateUserRequest)
+	if !ok {
+		return nil, badRequest("missing or invalid data")
+	}
 	err := transaction(func(db database.DB) error {
 		var err error
 		data.User, err = user.New(db, data.User)
@@ -468,7 +471,10 @@ func postUser(r *request) (interface{}, error) {
 }
 
 func putUser(r *request) (interface{}, error) {
-	data := r.d.(api.CreateUserRequest)
+	data, ok := r.d.(api.CreateUserRequest)
+	if !ok {
+		return nil, badRequest("missing or invalid data")
+	}
 	err := transaction(func(db database.DB) error {
 		if err := user.UpdateUser(db, data.User); err != nil {
 			return err

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -95,6 +96,9 @@ func main() {
 	http.HandleFunc(api.LoginURL, logURL(apih(apiGetPost(
 		apiAuth(getLogin),
 		postLogin))))
+	http.HandleFunc(api.LogoutURL, logURL(apih(apiGetPost(
+		apiAuth(getLogout),
+		postLogin))))
 	// user management
 	http.HandleFunc("/users", logURL(apih(apiAuth(onlyRoot(
 		apiGetPost(
@@ -116,7 +120,7 @@ func main() {
 			forwardPostRequest,
 			forwardDeleteRequest))))))))
 	// misc
-	http.HandleFunc("/api-version", apih(apiGet(getVersion)))
+	http.HandleFunc(api.VersionURL, apih(apiGet(getVersion)))
 	http.HandleFunc("/profiler-languages", logURL(apih(cached(
 		apiGet(forwardGetRequest)))))
 
@@ -399,6 +403,9 @@ func postLogin(r *request) (interface{}, error) {
 		return nil, forbidden("invalid password for user: %s",
 			data.Email)
 	}
+	if err = session.DeleteByUserID(db, u.ID); err != nil {
+		return nil, fmt.Errorf("cannot delete user: %s: %v", u, err)
+	}
 	s, err := session.New(db, u)
 	log.Debugf("login: new session: %s", s)
 	if err != nil {
@@ -411,6 +418,15 @@ func postLogin(r *request) (interface{}, error) {
 func getLogin(r *request) (interface{}, error) {
 	log.Debugf("session: %s", r.s)
 	return r.s.User, nil
+}
+
+func getLogout(r *request) (interface{}, error) {
+	log.Debugf("session: %s", r.s)
+	if err := session.DeleteByUserID(db, r.s.User.ID); err != nil {
+		return nil, fmt.Errorf("cannot delete session: %s: %v", r.s, err)
+	}
+	authCache.Remove(r.s.Auth)
+	return nil, nil
 }
 
 func getUser(r *request) (interface{}, error) {

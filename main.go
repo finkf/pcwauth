@@ -325,14 +325,14 @@ func onlyProjectOwner(f apifunc) apifunc {
 	}
 }
 
-var restProjectIDRegex = regexp.MustCompile(`/books/(\d+).*`)
+var restProjectIDRegex = regexp.MustCompile(`/books/(\d+)/.*`)
 
 func withProject(f apifunc) apifunc {
 	return func(r *request) (interface{}, error) {
 		url := r.r.URL.String()
 		m := restUserIDRegex.FindStringSubmatch(url)
 		if m == nil || len(m) != 2 {
-			return nil, notFound("no such url: %s", url)
+			return nil, notFound("no such url: %s [%v]", url, m)
 		}
 		id, _ := strconv.ParseInt(m[1], 10, 64)
 		p, err := getProjectCache(id)

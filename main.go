@@ -74,6 +74,7 @@ func dbConnectionString() string {
 
 func setupDatabase() error {
 	var err error
+	log.Debugf("connecting to db using: %s", dbConnectionString())
 	db, err = sql.Open("mysql", dbConnectionString())
 	if err != nil {
 		return err

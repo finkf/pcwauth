@@ -78,12 +78,16 @@ func setupDatabase() error {
 	if err != nil {
 		return err
 	}
-	if _, err := user.New(db, root.User); err == nil {
-		user.SetUserPassword(db, root.User, root.Password)
-	}
 	db.SetMaxOpenConns(100)
 	db.SetConnMaxLifetime(100)
 	db.SetMaxIdleConns(10)
+	if _, err := user.New(db, root.User); err != nil {
+		log.Errorf("cannot create root: %v", err)
+		return nil
+	}
+	if err := user.SetUserPassword(db, root.User, root.Password); err != nil {
+		log.Errorf("cannot set root password: %v", err)
+	}
 	return nil
 }
 

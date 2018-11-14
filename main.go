@@ -27,10 +27,7 @@ var (
 	host    string
 	cert    string
 	key     string
-	dbpass  string
-	dbname  string
-	dbhost  string
-	dbuser  string
+	dbdsn   string
 	pocoweb string
 	debug   bool
 	version api.Version
@@ -49,7 +46,7 @@ func init() {
 	flag.StringVar(&host, "listen", ":8080", "set listening host")
 	flag.StringVar(&cert, "cert", "", "set cert file (no tls if omitted)")
 	flag.StringVar(&key, "key", "", "set key file (no tls if omitted)")
-	flag.StringVar(&dbpass, "db", "", "set mysql connection DSN (user:pass@proto(host)/dbname)")
+	flag.StringVar(&dbdsn, "db", "", "set mysql connection DSN (user:pass@proto(host)/dbname)")
 	flag.StringVar(&pocoweb, "pocoweb", "", "set host of pocoweb")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 }
@@ -68,14 +65,10 @@ func must(err error) {
 	}
 }
 
-func dbConnectionString() string {
-	return dbuser + ":" + dbpass + "@(" + dbhost + ")/" + dbname
-}
-
 func setupDatabase() error {
 	var err error
-	log.Debugf("connecting to db using: %s", dbConnectionString())
-	db, err = sql.Open("mysql", dbConnectionString())
+	log.Debugf("connecting to db using: %s", dbdsn)
+	db, err = sql.Open("mysql", dbdsn)
 	if err != nil {
 		return err
 	}

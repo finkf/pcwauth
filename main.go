@@ -408,8 +408,8 @@ func postLogin(r *request) (interface{}, error) {
 
 	log.Infof("login request for user: %s", u)
 	if err = user.AuthenticateUser(db, u, data.Password); err != nil {
-		return nil, forbidden("invalid password for user: %s",
-			data.Email)
+		return nil, forbidden("invalid password for user: %s: %v",
+			data.Email, err)
 	}
 	if err = session.DeleteByUserID(db, u.ID); err != nil {
 		return nil, fmt.Errorf("cannot delete user: %s: %v", u, err)

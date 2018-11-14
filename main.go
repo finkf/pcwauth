@@ -33,13 +33,16 @@ var (
 	dbuser  string
 	pocoweb string
 	debug   bool
-	root    = user.User{
-		Name:      "root",
-		Email:     "root@example.com",
-		Institute: "CIS",
-		Admin:     true,
-	}
 	version api.Version
+	root    = api.CreateUserRequest{
+		User: user.User{
+			Name:      "root",
+			Email:     "root@example.com",
+			Institute: "CIS",
+			Admin:     true,
+		},
+		Password: "password",
+	}
 )
 
 func init() {
@@ -71,9 +74,12 @@ func dbConnectionString() string {
 
 func setupDatabase() error {
 	var err error
-	db, err = sql.Open("mysql", "pocoweb:pocoweb1998@(172.18.0.1)/pocoweb")
+	db, err = sql.Open("mysql", dbConnectionString())
 	if err != nil {
 		return err
+	}
+	if _, err := user.New(db, root.User); err == nil {
+		user.SetUserPassword(db, root.User, root.Password)
 	}
 	db.SetMaxOpenConns(100)
 	db.SetConnMaxLifetime(100)

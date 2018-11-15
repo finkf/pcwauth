@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/finkf/pcwgo/api"
 	"github.com/finkf/pcwgo/database"
@@ -29,17 +30,12 @@ var (
 	key     string
 	dbdsn   string
 	pocoweb string
+	rName   string
+	rPass   string
+	rEmail  string
+	rInst   string
 	debug   bool
 	version api.Version
-	root    = api.CreateUserRequest{
-		User: user.User{
-			Name:      "root",
-			Email:     "root@example.com",
-			Institute: "CIS",
-			Admin:     true,
-		},
-		Password: "password",
-	}
 )
 
 func init() {
@@ -48,6 +44,10 @@ func init() {
 	flag.StringVar(&key, "key", "", "set key file (no tls if omitted)")
 	flag.StringVar(&dbdsn, "db", "", "set mysql connection DSN (user:pass@proto(host)/dbname)")
 	flag.StringVar(&pocoweb, "pocoweb", "", "set host of pocoweb")
+	flag.StringVar(&rName, "root-name", "", "user name for the root account")
+	flag.StringVar(&rEmail, "root-email", "", "email for the root account")
+	flag.StringVar(&rPass, "root-pass", "", "password for the root account")
+	flag.StringVar(&rInst, "root-institute", "", "institute for the root account")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 }
 
@@ -72,30 +72,51 @@ func setupDatabase() error {
 	if err != nil {
 		return err
 	}
+	if err := waitForDB(); err != nil {
+		return err
+	}
 	db.SetMaxOpenConns(100)
 	db.SetConnMaxLifetime(100)
 	db.SetMaxIdleConns(10)
-	tmpuser, err := user.New(db, root.User)
+
+	if rPass == "" || rEmail == "" || rName == "" {
+		return nil
+	}
+	// create root user if possible
+	root := user.User{
+		Name:      rName,
+		Email:     rEmail,
+		Institute: rInst,
+	}
+	root, err = user.New(db, root)
 	if err != nil {
 		log.Errorf("cannot create root: %v", err)
 		return nil
 	}
-	root.User = tmpuser
-	if err := user.SetUserPassword(db, root.User, root.Password); err != nil {
+	if err := user.SetUserPassword(db, root, rPass); err != nil {
 		log.Errorf("cannot set root password: %v", err)
 	}
 	return nil
 }
 
-func setupLogging() {
-	if debug {
-		log.SetLevel(log.DebugLevel)
+func waitForDB() error {
+	const n = 3
+	for i := 0; i < n; i++ {
+		var err error
+		if err = db.Ping(); err == nil {
+			return nil
+		}
+		log.Infof("database not ready: %v", err)
+		time.Sleep(5 * time.Second)
 	}
+	return fmt.Errorf("database did not respond after %d tries", n)
 }
 
 func main() {
 	flag.Parse()
-	setupLogging()
+	if debug {
+		log.SetLevel(log.DebugLevel)
+	}
 	must(setupDatabase())
 	defer db.Close()
 	// login

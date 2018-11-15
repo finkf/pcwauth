@@ -87,6 +87,7 @@ func setupDatabase() error {
 		Name:      rName,
 		Email:     rEmail,
 		Institute: rInst,
+		Admin:     true,
 	}
 	root, err = user.New(db, root)
 	if err != nil {

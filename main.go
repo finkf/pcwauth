@@ -46,7 +46,7 @@ func init() {
 	flag.StringVar(&pocoweb, "pocoweb", "", "set host of pocoweb")
 	flag.StringVar(&rName, "root-name", "", "user name for the root account")
 	flag.StringVar(&rEmail, "root-email", "", "email for the root account")
-	flag.StringVar(&rPass, "root-pass", "", "password for the root account")
+	flag.StringVar(&rPass, "root-password", "", "password for the root account")
 	flag.StringVar(&rInst, "root-institute", "", "institute for the root account")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 }

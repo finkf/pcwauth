@@ -531,7 +531,7 @@ func deleteUser(r *request) (interface{}, error) {
 }
 
 func forwardGetRequest(r *request) (interface{}, error) {
-	url := forwardURL(r)
+	url := r.forwardURL()
 	log.Debugf("forwarding request: GET %s", url)
 	res, err := http.Get(url)
 	if err != nil {
@@ -546,7 +546,7 @@ func forwardGetRequest(r *request) (interface{}, error) {
 }
 
 func forwardPostRequest(r *request) (interface{}, error) {
-	url := forwardURL(r)
+	url := r.forwardURL()
 	log.Debugf("forwarding request: POST %s", url)
 	res, err := http.Post(url, r.r.Header.Get("Content-Type"), r.r.Body)
 	if err != nil {
@@ -561,7 +561,7 @@ func forwardPostRequest(r *request) (interface{}, error) {
 }
 
 func forwardDeleteRequest(r *request) (interface{}, error) {
-	url := forwardURL(r)
+	url := r.forwardURL()
 	log.Debugf("forwarding request: DELETE %s", url)
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
@@ -622,11 +622,11 @@ func copyResponse(r io.Reader) (interface{}, error) {
 	return data, nil
 }
 
-func forwardURL(r *request) string {
+func (r *request) forwardURL() string {
 	url := r.r.URL.String()
 	i := strings.LastIndex(url, "?")
 	if i == -1 {
-		return pocoweb + url
+		return fmt.Sprintf("%s%s?userid=%d", pocoweb, url, r.s.User.ID)
 	}
-	return pocoweb + url[0:i] + "?userid=" + strconv.Itoa(int(r.s.User.ID))
+	return fmt.Sprintf("%s%s&userid=%d", pocoweb, url, r.s.User.ID)
 }

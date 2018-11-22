@@ -122,27 +122,27 @@ func main() {
 	defer db.Close()
 	// login
 	http.HandleFunc(api.LoginURL, logURL(apih(apiGetPost(
-		apiAuth(getLogin),
+		withAuth(getLogin),
 		postLogin))))
 	http.HandleFunc(api.LogoutURL, logURL(apih(apiGetPost(
-		apiAuth(getLogout),
+		withAuth(getLogout),
 		postLogin))))
 	// user management
-	http.HandleFunc("/users", logURL(apih(apiAuth(onlyRoot(
+	http.HandleFunc("/users", logURL(apih(withAuth(onlyRoot(
 		apiGetPost(
 			getUser,
 			withUser(postUser)))))))
-	http.HandleFunc("/users/", logURL(apih(apiAuth(withUserID(rootOrSelf(
+	http.HandleFunc("/users/", logURL(apih(withAuth(withUserID(rootOrSelf(
 		apiGetPutDelete(
 			getUser,
 			withUser(putUser),
 			deleteUser)))))))
 	// book management
-	http.HandleFunc("/books", logURL(apih(apiAuth(cached(
+	http.HandleFunc("/books", logURL(apih(withAuth(cached(
 		apiGetPost(
 			forwardGetRequest,
 			onlyRoot(forwardPostRequest)))))))
-	http.HandleFunc("/books/", logURL(apih(apiAuth(cached(withProject(onlyProjectOwner(
+	http.HandleFunc("/books/", logURL(apih(withAuth(cached(withProject(onlyProjectOwner(
 		apiGetPostDelete(
 			forwardGetRequest,
 			forwardPostRequest,
@@ -307,7 +307,7 @@ func apiGet(f apifunc) apifunc {
 	}
 }
 
-func apiAuth(f apifunc) apifunc {
+func withAuth(f apifunc) apifunc {
 	return func(r *request) (interface{}, error) {
 		if len(r.r.URL.Query()["auth"]) != 1 {
 			return nil, forbidden("missing auth parameter")

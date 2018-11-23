@@ -69,7 +69,10 @@ func setupDatabase() error {
 	log.Debugf("connecting to db using: %s", dbdsn)
 	db, err = sql.Open("mysql", dbdsn)
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot connect to database: %v", err)
+	}
+	if err = db.Ping(); err != nil {
+		return fmt.Errorf("cannot ping database: %v")
 	}
 	db.SetMaxOpenConns(100)
 	db.SetConnMaxLifetime(100)

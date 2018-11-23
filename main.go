@@ -82,21 +82,29 @@ func setupDatabase() error {
 	if rPass == "" || rEmail == "" || rName == "" {
 		return nil
 	}
-	// create root user if possible
+	return insertUser()
+}
+
+func insertUser() error {
 	root := user.User{
 		Name:      rName,
 		Email:     rEmail,
 		Institute: rInst,
 		Admin:     true,
 	}
-	root, err = user.New(db, root)
+	_, found, err := user.FindByEmail(db, root.Email)
 	if err != nil {
-		log.Errorf("cannot create root user: %v", err)
+		return fmt.Errorf("cannot find user %s: %v", root, err)
+	}
+	if found { // root allready exists
 		return nil
 	}
+	root, err = user.New(db, root)
+	if err != nil {
+		return fmt.Errorf("cannot create user %s: %v", root, err)
+	}
 	if err := user.SetUserPassword(db, root, rPass); err != nil {
-		log.Errorf("cannot set root password: %v", err)
-		return nil
+		return fmt.Errorf("cannot set password for %s: %v", root, err)
 	}
 	return nil
 }

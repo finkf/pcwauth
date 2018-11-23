@@ -60,6 +60,7 @@ type request struct {
 
 func must(err error) {
 	if err != nil {
+		log.Errorf("error: %v", err)
 		panic(err)
 	}
 }
@@ -72,7 +73,7 @@ func setupDatabase() error {
 		return fmt.Errorf("cannot connect to database: %v", err)
 	}
 	if err = db.Ping(); err != nil {
-		return fmt.Errorf("cannot ping database: %v")
+		return fmt.Errorf("cannot ping database: %v", err)
 	}
 	db.SetMaxOpenConns(100)
 	db.SetConnMaxLifetime(100)
@@ -90,10 +91,12 @@ func setupDatabase() error {
 	}
 	root, err = user.New(db, root)
 	if err != nil {
-		return fmt.Errorf("cannot create root user: %v", err)
+		log.Errorf("cannot create root user: %v", err)
+		return nil
 	}
 	if err := user.SetUserPassword(db, root, rPass); err != nil {
-		return fmt.Errorf("cannot set root password: %v", err)
+		log.Errorf("cannot set root password: %v", err)
+		return nil
 	}
 	return nil
 }

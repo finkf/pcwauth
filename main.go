@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/finkf/pcwgo/api"
 	"github.com/finkf/pcwgo/database"
@@ -72,9 +71,6 @@ func setupDatabase() error {
 	if err != nil {
 		return err
 	}
-	if err := waitForDB(); err != nil {
-		return err
-	}
 	db.SetMaxOpenConns(100)
 	db.SetConnMaxLifetime(100)
 	db.SetMaxIdleConns(10)
@@ -91,26 +87,12 @@ func setupDatabase() error {
 	}
 	root, err = user.New(db, root)
 	if err != nil {
-		log.Errorf("cannot create root: %v", err)
-		return nil
+		return fmt.Errorf("cannot create root user: %v", err)
 	}
 	if err := user.SetUserPassword(db, root, rPass); err != nil {
-		log.Errorf("cannot set root password: %v", err)
+		return fmt.Errorf("cannot set root password: %v", err)
 	}
 	return nil
-}
-
-func waitForDB() error {
-	const n = 3
-	for i := 0; i < n; i++ {
-		var err error
-		if err = db.Ping(); err == nil {
-			return nil
-		}
-		log.Infof("database not ready: %v", err)
-		time.Sleep(5 * time.Second)
-	}
-	return fmt.Errorf("database did not respond after %d tries", n)
 }
 
 func main() {

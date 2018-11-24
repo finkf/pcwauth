@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -61,7 +62,7 @@ type request struct {
 func must(err error) {
 	if err != nil {
 		log.Errorf("error: %v", err)
-		panic(err)
+		os.Exit(1)
 	}
 }
 

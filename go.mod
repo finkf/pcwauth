@@ -11,7 +11,6 @@ require (
 	github.com/go-sql-driver/mysql v1.4.0
 	github.com/sirupsen/logrus v1.2.0
 	golang.org/x/crypto v0.0.0-20181112202954-3d3f9f413869 // indirect
-	golang.org/x/net v0.0.0-20181108082009-03003ca0c849 // indirect
 	golang.org/x/sys v0.0.0-20181107165924-66b7b1311ac8 // indirect
 	google.golang.org/appengine v1.3.0 // indirect
 )

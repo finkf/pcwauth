@@ -135,19 +135,20 @@ func main() {
 			withUser(putUser),
 			deleteUser)))))))
 	// book management
-	http.HandleFunc("/books", logURL(apih(withAuth(cached(
+	http.HandleFunc("/books", logURL(apih(withAuth( /*cached(*/
 		apiGetPost(
 			forwardGetRequest,
-			onlyRoot(forwardPostRequest)))))))
-	http.HandleFunc("/books/", logURL(apih(withAuth(cached(withProject(onlyProjectOwner(
-		apiGetPostDelete(
-			forwardGetRequest,
-			forwardPostRequest,
-			forwardDeleteRequest))))))))
+			onlyRoot(forwardPostRequest)))))) /*)*/
+	http.HandleFunc("/books/", logURL(apih(withAuth( /*cached(*/
+		withProject(onlyProjectOwner(
+			apiGetPostDelete(
+				forwardGetRequest,
+				forwardPostRequest,
+				forwardDeleteRequest))))))) /*)*/
 	// misc
 	http.HandleFunc(api.VersionURL, apih(apiGet(getVersion)))
-	http.HandleFunc("/profiler-languages", logURL(apih(cached(
-		apiGet(forwardGetRequest)))))
+	http.HandleFunc("/profiler-languages", logURL(apih( /*cached(*/
+		apiGet(forwardGetRequest)))) /*)*/
 
 	log.Infof("listening on %s", host)
 	if cert != "" && key != "" {

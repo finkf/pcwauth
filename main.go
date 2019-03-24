@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/finkf/pcwgo/api"
 	"github.com/finkf/pcwgo/database"
@@ -316,7 +317,8 @@ func withAuth(f apifunc) apifunc {
 			return nil, err
 		}
 		r.s = val.(session.Session)
-		log.Infof("user %s authenticated with: %s", r.s.User, r.s.Auth)
+		log.Infof("user %s authenticated: %s (expires: %s)",
+			r.s.User, r.s.Auth, time.Unix(r.s.Expires, 0).Format(time.RFC3339))
 		return f(r)
 	}
 }

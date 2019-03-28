@@ -16,27 +16,24 @@ import (
 	"time"
 
 	"github.com/finkf/pcwgo/api"
-	"github.com/finkf/pcwgo/database"
-	"github.com/finkf/pcwgo/database/project"
-	"github.com/finkf/pcwgo/database/session"
-	"github.com/finkf/pcwgo/database/user"
+	"github.com/finkf/pcwgo/db"
 	_ "github.com/go-sql-driver/mysql"
 	log "github.com/sirupsen/logrus"
 )
 
 var (
-	db      *sql.DB
-	host    string
-	cert    string
-	key     string
-	dbdsn   string
-	pocoweb string
-	rName   string
-	rPass   string
-	rEmail  string
-	rInst   string
-	debug   bool
-	version api.Version
+	database *sql.DB
+	host     string
+	cert     string
+	key      string
+	dbdsn    string
+	pocoweb  string
+	rName    string
+	rPass    string
+	rEmail   string
+	rInst    string
+	debug    bool
+	version  api.Version
 )
 
 func init() {
@@ -53,11 +50,11 @@ func init() {
 }
 
 type request struct {
-	r  *http.Request   // request
-	s  session.Session // session
-	p  project.Project // the project
-	d  interface{}     // post or put data
-	id int64           // active ID
+	r  *http.Request // request
+	s  db.Session    // session
+	p  db.Project    // the project
+	d  interface{}   // post or put data
+	id int64         // active ID
 }
 
 func must(err error) {
@@ -70,16 +67,16 @@ func must(err error) {
 func setupDatabase() error {
 	var err error
 	log.Debugf("connecting to db using: %s", dbdsn)
-	db, err = sql.Open("mysql", dbdsn)
+	database, err = sql.Open("mysql", dbdsn)
 	if err != nil {
 		return fmt.Errorf("cannot connect to database: %v", err)
 	}
-	if err = db.Ping(); err != nil {
+	if err = database.Ping(); err != nil {
 		return fmt.Errorf("cannot ping database: %v", err)
 	}
-	db.SetMaxOpenConns(100)
-	db.SetConnMaxLifetime(100)
-	db.SetMaxIdleConns(10)
+	database.SetMaxOpenConns(100)
+	database.SetConnMaxLifetime(100)
+	database.SetMaxIdleConns(10)
 
 	if rPass == "" || rEmail == "" || rName == "" {
 		return nil
@@ -88,24 +85,23 @@ func setupDatabase() error {
 }
 
 func insertUser() error {
-	root := user.User{
+	root := db.User{
 		Name:      rName,
 		Email:     rEmail,
 		Institute: rInst,
 		Admin:     true,
 	}
-	_, found, err := user.FindByEmail(db, root.Email)
+	_, found, err := db.FindUserByEmail(database, root.Email)
 	if err != nil {
 		return fmt.Errorf("cannot find user %s: %v", root, err)
 	}
 	if found { // root allready exists
 		return nil
 	}
-	root, err = user.New(db, root)
-	if err != nil {
+	if err = db.InsertUser(database, &root); err != nil {
 		return fmt.Errorf("cannot create user %s: %v", root, err)
 	}
-	if err := user.SetUserPassword(db, root, rPass); err != nil {
+	if err := db.SetUserPassword(database, root, rPass); err != nil {
 		return fmt.Errorf("cannot set password for %s: %v", root, err)
 	}
 	return nil
@@ -117,7 +113,7 @@ func main() {
 		log.SetLevel(log.DebugLevel)
 	}
 	must(setupDatabase())
-	defer db.Close()
+	defer database.Close()
 	// login
 	http.HandleFunc(api.LoginURL, logURL(apih(apiGetPost(
 		withAuth(getLogin),
@@ -316,7 +312,7 @@ func withAuth(f apifunc) apifunc {
 		if err != nil {
 			return nil, err
 		}
-		r.s = val.(session.Session)
+		r.s = db.Session(val.(db.Session))
 		log.Infof("user %s authenticated: %s (expires: %s)",
 			r.s.User, r.s.Auth, time.Unix(r.s.Expires, 0).Format(time.RFC3339))
 		return f(r)
@@ -420,7 +416,7 @@ func postLogin(r *request) (interface{}, error) {
 		return nil, badRequest("invalid login data for user: %s",
 			data.Email)
 	}
-	u, found, err := user.FindByEmail(db, data.Email)
+	user, found, err := db.FindUserByEmail(database, data.Email)
 	if err != nil {
 		return nil, err
 	}
@@ -428,15 +424,16 @@ func postLogin(r *request) (interface{}, error) {
 		return nil, notFound("cannot find user: %s", data.Email)
 	}
 
-	log.Infof("login request for user: %s", u)
-	if err = user.AuthenticateUser(db, u, data.Password); err != nil {
+	log.Infof("login request for user: %s", user)
+	if err = db.AuthenticateUser(database, user, data.Password); err != nil {
 		return nil, forbidden("invalid password for user: %s: %v",
 			data.Email, err)
 	}
-	if err = session.DeleteByUserID(db, u.ID); err != nil {
-		return nil, fmt.Errorf("cannot delete user: %s: %v", u, err)
+	if err = db.DeleteUserByID(database, user.ID); err != nil {
+		return nil, fmt.Errorf("cannot delete user: %s: %v", user, err)
 	}
-	s, err := session.New(db, u)
+
+	s, err := db.InsertSession(database, user)
 	log.Debugf("login: new session: %s", s)
 	if err != nil {
 		return nil, err
@@ -452,7 +449,7 @@ func getLogin(r *request) (interface{}, error) {
 
 func getLogout(r *request) (interface{}, error) {
 	log.Debugf("session: %s", r.s)
-	if err := session.DeleteByUserID(db, r.s.User.ID); err != nil {
+	if err := db.DeleteUserByID(database, r.s.User.ID); err != nil {
 		return nil, fmt.Errorf("cannot delete session: %s: %v", r.s, err)
 	}
 	authCache.Remove(r.s.Auth)
@@ -462,17 +459,17 @@ func getLogout(r *request) (interface{}, error) {
 func getUser(r *request) (interface{}, error) {
 	if r.id == 0 { // list all users (root only)
 		log.Debugf("get all users")
-		users, err := user.All(db)
+		users, err := db.FindAllUsers(database)
 		return api.Users{Users: users}, err
 	}
 	// list self user
-	u, found, err := user.FindByID(db, r.id)
+	u, found, err := db.FindUserByID(database, r.id)
 	if err != nil {
-		return user.User{}, internalServerError("cannot find user-id: %d: %v",
+		return db.User{}, internalServerError("cannot find user-id: %d: %v",
 			r.id, err)
 	}
 	if !found {
-		return user.User{}, notFound("cannnot find user-id: %d", r.id)
+		return db.User{}, notFound("cannnot find user-id: %d", r.id)
 	}
 	log.Printf("get user: %s", u)
 	return u, nil
@@ -481,40 +478,42 @@ func getUser(r *request) (interface{}, error) {
 func postUser(r *request) (interface{}, error) {
 	// this must not fail
 	data := r.d.(api.CreateUserRequest)
-	err := transaction(func(db database.DB) error {
-		var err error
-		data.User, err = user.New(db, data.User)
-		if err != nil {
+	t := db.NewTransaction(database.Begin())
+	t.Do(func(database db.DB) error {
+		if err := db.InsertUser(database, &data.User); err != nil {
 			return badRequest("cannot create new user: %v", err)
 		}
-		if err := user.SetUserPassword(db, data.User, data.Password); err != nil {
+		return nil
+	})
+	t.Do(func(database db.DB) error {
+		if err := db.SetUserPassword(database, data.User, data.Password); err != nil {
 			return badRequest("cannot set password: %v", err)
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	log.Infof("created user: %s", data.User)
-	return data.User, nil
+	return data.User, t.Done()
 }
 
 func putUser(r *request) (interface{}, error) {
 	// this must not fail
 	data := r.d.(api.CreateUserRequest)
-	err := transaction(func(db database.DB) error {
-		if err := user.UpdateUser(db, data.User); err != nil {
-			return err
-		}
-		if data.Password == "" { // do not update emtpy passwords
-			return nil
-		}
-		if err := user.SetUserPassword(db, data.User, data.Password); err != nil {
+	t := db.NewTransaction(database.Begin())
+	t.Do(func(database db.DB) error {
+		if err := db.UpdateUser(database, data.User); err != nil {
 			return err
 		}
 		return nil
 	})
-	if err != nil {
+	t.Do(func(database db.DB) error {
+		if data.Password == "" { // do not update emtpy passwords
+			return nil
+		}
+		if err := db.SetUserPassword(database, data.User, data.Password); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err := t.Done(); err != nil {
 		return nil, err
 	}
 	r.s.User = data.User
@@ -524,7 +523,7 @@ func putUser(r *request) (interface{}, error) {
 
 func deleteUser(r *request) (interface{}, error) {
 	// TODO: delete all projects of the particular user
-	if err := user.DeleteUserByID(db, r.id); err != nil {
+	if err := db.DeleteUserByID(database, r.id); err != nil {
 		return nil, notFound("cannot delete user-id: %d: %v", r.id, err)
 	}
 	return nil, nil
@@ -590,28 +589,6 @@ func getVersion(r *request) (interface{}, error) {
 		}
 	}
 	return version, nil
-}
-
-//
-// helper functions
-//
-func transaction(f func(db database.DB) error) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return internalServerError("transaction begin error: %v", err)
-	}
-	if err := f(tx); err != nil {
-		if e2 := tx.Rollback(); e2 != nil {
-			return internalServerError(
-				"transaction rollback error: %v: %v", err, e2,
-			)
-		}
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return internalServerError("transaction commit error: %v", err)
-	}
-	return nil
 }
 
 func copyResponse(r io.Reader) (interface{}, error) {

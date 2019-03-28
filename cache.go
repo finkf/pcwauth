@@ -5,24 +5,23 @@ import (
 	"time"
 
 	"github.com/bluele/gcache"
-	"github.com/finkf/pcwgo/database/project"
-	"github.com/finkf/pcwgo/database/session"
+	"github.com/finkf/pcwgo/db"
 	log "github.com/sirupsen/logrus"
 )
 
 var authCache = gcache.New(20).LRU().LoaderExpireFunc(loadSessionAuthToken).Build()
 
-func putAuthCache(s session.Session) error {
+func putAuthCache(s db.Session) error {
 	return authCache.SetWithExpire(s.Auth, s, time.Until(time.Unix(s.Expires, 0)))
 }
 
-func getAuthCache(token string) (session.Session, error) {
+func getAuthCache(token string) (db.Session, error) {
 	val, err := authCache.Get(token)
 	if err != nil {
-		return session.Session{}, err
+		return db.Session{}, err
 	}
 	log.Debugf("found auth-token: %s", token)
-	return val.(session.Session), nil
+	return val.(db.Session), nil
 }
 
 func purgeAuthCache() {
@@ -33,7 +32,7 @@ func purgeAuthCache() {
 func loadSessionAuthToken(token interface{}) (interface{}, *time.Duration, error) {
 	str := token.(string)
 	log.Debugf("[not cached] looking up auth-token: %s", str)
-	s, found, err := session.FindByID(db, str)
+	s, found, err := db.FindSessionByID(database, str)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -46,7 +45,7 @@ func loadSessionAuthToken(token interface{}) (interface{}, *time.Duration, error
 
 var projectCache = gcache.New(20).LoaderFunc(loadProjectData).Build()
 
-func putProjectCache(p project.Project) error {
+func putProjectCache(p db.Project) error {
 	return projectCache.Set(p.ID, p)
 }
 
@@ -55,19 +54,19 @@ func purgeProjectCache() {
 	projectCache.Purge()
 }
 
-func getProjectCache(id int64) (project.Project, error) {
+func getProjectCache(id int64) (db.Project, error) {
 	val, err := projectCache.Get(id)
 	if err != nil {
-		return project.Project{}, err
+		return db.Project{}, err
 	}
 	log.Debugf("found project-id: %d", id)
-	return val.(project.Project), nil
+	return val.(db.Project), nil
 }
 
 func loadProjectData(key interface{}) (interface{}, error) {
 	id := key.(int64)
 	log.Debugf("[not cached] looking up project-id: %d", id)
-	p, found, err := project.FindByID(db, id)
+	p, found, err := db.FindProjectByID(database, id)
 	if err != nil {
 		return nil, err
 	}

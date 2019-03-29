@@ -51,7 +51,7 @@ func init() {
 
 type request struct {
 	r  *http.Request // request
-	s  db.Session    // session
+	s  api.Session   // session
 	p  db.Project    // the project
 	d  interface{}   // post or put data
 	id int64         // active ID
@@ -85,7 +85,7 @@ func setupDatabase() error {
 }
 
 func insertUser() error {
-	root := db.User{
+	root := api.User{
 		Name:      rName,
 		Email:     rEmail,
 		Institute: rInst,
@@ -312,7 +312,7 @@ func withAuth(f apifunc) apifunc {
 		if err != nil {
 			return nil, err
 		}
-		r.s = db.Session(val.(db.Session))
+		r.s = val.(api.Session)
 		log.Infof("user %s authenticated: %s (expires: %s)",
 			r.s.User, r.s.Auth, time.Unix(r.s.Expires, 0).Format(time.RFC3339))
 		return f(r)
@@ -465,11 +465,11 @@ func getUser(r *request) (interface{}, error) {
 	// list self user
 	u, found, err := db.FindUserByID(database, r.id)
 	if err != nil {
-		return db.User{}, internalServerError("cannot find user-id: %d: %v",
+		return api.User{}, internalServerError("cannot find user-id: %d: %v",
 			r.id, err)
 	}
 	if !found {
-		return db.User{}, notFound("cannnot find user-id: %d", r.id)
+		return api.User{}, notFound("cannnot find user-id: %d", r.id)
 	}
 	log.Printf("get user: %s", u)
 	return u, nil

@@ -5,23 +5,24 @@ import (
 	"time"
 
 	"github.com/bluele/gcache"
+	"github.com/finkf/pcwgo/api"
 	"github.com/finkf/pcwgo/db"
 	log "github.com/sirupsen/logrus"
 )
 
 var authCache = gcache.New(20).LRU().LoaderExpireFunc(loadSessionAuthToken).Build()
 
-func putAuthCache(s db.Session) error {
+func putAuthCache(s api.Session) error {
 	return authCache.SetWithExpire(s.Auth, s, time.Until(time.Unix(s.Expires, 0)))
 }
 
-func getAuthCache(token string) (db.Session, error) {
+func getAuthCache(token string) (api.Session, error) {
 	val, err := authCache.Get(token)
 	if err != nil {
-		return db.Session{}, err
+		return api.Session{}, err
 	}
 	log.Debugf("found auth-token: %s", token)
-	return val.(db.Session), nil
+	return val.(api.Session), nil
 }
 
 func purgeAuthCache() {

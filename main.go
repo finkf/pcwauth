@@ -449,7 +449,7 @@ func getLogin(r *request) (interface{}, error) {
 func getLogout(r *request) (interface{}, error) {
 	log.Debugf("session: %s", r.s)
 	authCache.Remove(r.s.Auth)
-	if err := db.DeleteSessionByID(database, r.s.User.ID); err != nil {
+	if err := db.DeleteSessionByUserID(database, r.s.User.ID); err != nil {
 		return nil, fmt.Errorf("cannot delete session: %s: %v", r.s, err)
 	}
 	return nil, nil

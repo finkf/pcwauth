@@ -52,7 +52,7 @@ func init() {
 type request struct {
 	r  *http.Request // request
 	s  api.Session   // session
-	p  db.Project    // the project
+	p  *db.Project   // the project
 	d  interface{}   // post or put data
 	id int64         // active ID
 }

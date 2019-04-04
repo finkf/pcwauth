@@ -46,7 +46,7 @@ func loadSessionAuthToken(token interface{}) (interface{}, *time.Duration, error
 
 var projectCache = gcache.New(20).LoaderFunc(loadProjectData).Build()
 
-func putProjectCache(p db.Project) error {
+func putProjectCache(p *db.Project) error {
 	return projectCache.Set(p.ID, p)
 }
 
@@ -55,13 +55,13 @@ func purgeProjectCache() {
 	projectCache.Purge()
 }
 
-func getProjectCache(id int64) (db.Project, error) {
+func getProjectCache(id int64) (*db.Project, error) {
 	val, err := projectCache.Get(id)
 	if err != nil {
-		return db.Project{}, err
+		return nil, err
 	}
 	log.Debugf("found project-id: %d", id)
-	return val.(db.Project), nil
+	return val.(*db.Project), nil
 }
 
 func loadProjectData(key interface{}) (interface{}, error) {

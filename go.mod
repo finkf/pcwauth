@@ -5,6 +5,7 @@ require (
 	github.com/finkf/pcwgo/api v0.4.0
 	github.com/finkf/pcwgo/db v0.3.0
 	github.com/go-sql-driver/mysql v1.4.1
-	github.com/sirupsen/logrus v1.4.0
+	github.com/sirupsen/logrus v1.4.1
+	golang.org/x/crypto v0.0.0-20190404164418-38d8ce5564a5 // indirect
 	google.golang.org/appengine v1.5.0 // indirect
 )

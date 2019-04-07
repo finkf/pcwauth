@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"regexp"
@@ -180,10 +179,6 @@ func apih(f apifunc) hf {
 			apiForward(w, r)
 			return
 		}
-		if data, ok := res.([]byte); ok {
-			apiBytes(w, data)
-			return
-		}
 		apiJSON(w, res)
 	}
 }
@@ -200,20 +195,10 @@ func apiJSON(w http.ResponseWriter, data interface{}) {
 	}
 }
 
-func apiBytes(w http.ResponseWriter, data []byte) {
-	if data == nil {
+func apiForward(w http.ResponseWriter, r io.Reader) {
+	if r == nil {
 		return
 	}
-	// bytes are still JSON encoded data
-	w.Header()["Content-Type"] = []string{"application/json"}
-	if _, err := w.Write(data); err != nil {
-		// There is no way to handle this error
-		// other than to log it.
-		log.Errorf("cannot write data: %v", err)
-	}
-}
-
-func apiForward(w http.ResponseWriter, r io.Reader) {
 	// reader must contain JSON encoded data
 	w.Header()["Content-Type"] = []string{"application/json"}
 	n, err := io.Copy(w, r)
@@ -550,6 +535,7 @@ func forwardGetRequest(r *request) (interface{}, error) {
 	if err != nil {
 		return nil, internalServerError("cannot forward get request: %v", err)
 	}
+	log.Debugf("got answer from forward request")
 	if !api.IsValidJSONResponse(res, http.StatusOK) {
 		res.Body.Close()
 		return nil, errorFromCode(res.StatusCode, "bad response [%s]",
@@ -560,11 +546,12 @@ func forwardGetRequest(r *request) (interface{}, error) {
 
 func forwardPostRequest(r *request) (interface{}, error) {
 	url := r.forwardURL()
-	log.Debugf("forwarding request: POST %s", url)
+	log.Infof("forwarding request: POST %s", url)
 	res, err := http.Post(url, r.r.Header.Get("Content-Type"), r.r.Body)
 	if err != nil {
 		return nil, internalServerError("cannot forward post request: %v", err)
 	}
+	log.Debugf("got answer from forward request")
 	if !api.IsValidJSONResponse(res, http.StatusOK, http.StatusCreated) {
 		res.Body.Close()
 		return nil, errorFromCode(res.StatusCode, "bad response [%s]",
@@ -603,14 +590,6 @@ func getVersion(r *request) (interface{}, error) {
 		}
 	}
 	return version, nil
-}
-
-func copyResponse(r io.Reader) (interface{}, error) {
-	data, err := ioutil.ReadAll(r)
-	if err != nil {
-		return nil, internalServerError("cannot copy data: %v", err)
-	}
-	return data, nil
 }
 
 func (r *request) forwardURL() string {

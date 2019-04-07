@@ -175,6 +175,11 @@ func apih(f apifunc) hf {
 			apiError(w, err)
 			return
 		}
+		if r, ok := res.(io.ReadCloser); ok {
+			defer r.Close()
+			apiForward(w, r)
+			return
+		}
 		if data, ok := res.([]byte); ok {
 			apiBytes(w, data)
 			return
@@ -206,6 +211,16 @@ func apiBytes(w http.ResponseWriter, data []byte) {
 		// other than to log it.
 		log.Errorf("cannot write data: %v", err)
 	}
+}
+
+func apiForward(w http.ResponseWriter, r io.Reader) {
+	// reader must contain JSON encoded data
+	w.Header()["Content-Type"] = []string{"application/json"}
+	n, err := io.Copy(w, r)
+	if err != nil {
+		log.Errorf("could not forward: %v", err)
+	}
+	log.Infof("forwarded %d bytes", n)
 }
 
 // err must not be nil
@@ -535,12 +550,12 @@ func forwardGetRequest(r *request) (interface{}, error) {
 	if err != nil {
 		return nil, internalServerError("cannot forward get request: %v", err)
 	}
-	defer res.Body.Close()
 	if !api.IsValidJSONResponse(res, http.StatusOK) {
+		res.Body.Close()
 		return nil, errorFromCode(res.StatusCode, "bad response [%s]",
 			res.Header.Get("Content-Type"))
 	}
-	return copyResponse(res.Body)
+	return res.Body, nil
 }
 
 func forwardPostRequest(r *request) (interface{}, error) {
@@ -550,12 +565,12 @@ func forwardPostRequest(r *request) (interface{}, error) {
 	if err != nil {
 		return nil, internalServerError("cannot forward post request: %v", err)
 	}
-	defer res.Body.Close()
 	if !api.IsValidJSONResponse(res, http.StatusOK, http.StatusCreated) {
+		res.Body.Close()
 		return nil, errorFromCode(res.StatusCode, "bad response [%s]",
 			res.Header.Get("Content-Type"))
 	}
-	return copyResponse(res.Body)
+	return res.Body, nil
 }
 
 func forwardDeleteRequest(r *request) (interface{}, error) {
@@ -569,8 +584,8 @@ func forwardDeleteRequest(r *request) (interface{}, error) {
 	if err != nil {
 		return nil, internalServerError("cannot forward post request: %v", err)
 	}
-	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		res.Body.Close()
 		return nil, errorFromCode(res.StatusCode, "bad response from backend")
 	}
 	return nil, nil

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"regexp"
@@ -33,6 +34,7 @@ var (
 	rInst    string
 	debug    bool
 	version  api.Version
+	client   *http.Client
 )
 
 func init() {
@@ -46,6 +48,10 @@ func init() {
 	flag.StringVar(&rPass, "root-password", "", "password for the root account")
 	flag.StringVar(&rInst, "root-institute", "", "institute for the root account")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
+	client = &http.Client{Transport: &http.Transport{
+		MaxIdleConnsPerHost: 1024,
+		TLSHandshakeTimeout: 0 * time.Second,
+	}}
 }
 
 type request struct {
@@ -528,16 +534,21 @@ func deleteUser(r *request) (interface{}, error) {
 	return nil, nil
 }
 
+func drain(res *http.Response) {
+	defer res.Body.Close()
+	io.Copy(ioutil.Discard, res.Body)
+}
+
 func forwardGetRequest(r *request) (interface{}, error) {
 	url := r.forwardURL()
 	log.Debugf("forwarding request: GET %s", url)
-	res, err := http.Get(url)
+	res, err := client.Get(url)
 	if err != nil {
 		return nil, internalServerError("cannot forward get request: %v", err)
 	}
 	log.Debugf("got answer from forward request")
 	if !api.IsValidJSONResponse(res, http.StatusOK) {
-		res.Body.Close()
+		drain(res)
 		return nil, errorFromCode(res.StatusCode, "bad response [%s]",
 			res.Header.Get("Content-Type"))
 	}
@@ -547,13 +558,13 @@ func forwardGetRequest(r *request) (interface{}, error) {
 func forwardPostRequest(r *request) (interface{}, error) {
 	url := r.forwardURL()
 	log.Infof("forwarding request: POST %s", url)
-	res, err := http.Post(url, r.r.Header.Get("Content-Type"), r.r.Body)
+	res, err := client.Post(url, r.r.Header.Get("Content-Type"), r.r.Body)
 	if err != nil {
 		return nil, internalServerError("cannot forward post request: %v", err)
 	}
 	log.Debugf("got answer from forward request")
 	if !api.IsValidJSONResponse(res, http.StatusOK, http.StatusCreated) {
-		res.Body.Close()
+		drain(res)
 		return nil, errorFromCode(res.StatusCode, "bad response [%s]",
 			res.Header.Get("Content-Type"))
 	}
@@ -567,12 +578,12 @@ func forwardDeleteRequest(r *request) (interface{}, error) {
 	if err != nil {
 		return nil, internalServerError("cannot forward delete request: %v", err)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, internalServerError("cannot forward post request: %v", err)
 	}
 	if res.StatusCode != http.StatusOK {
-		res.Body.Close()
+		drain(res)
 		return nil, errorFromCode(res.StatusCode, "bad response from backend")
 	}
 	return nil, nil

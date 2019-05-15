@@ -149,6 +149,8 @@ func main() {
 				forwardPostRequest(pocoweb),
 				forwardDeleteRequest(pocoweb)))))))) /*)*/
 	// profiling
+	http.HandleFunc("/profile/languages",
+		logURL(apih(apiGet(forwardGetRequest(profiler)))))
 	http.HandleFunc("/profile/",
 		logURL(apih(apiGet(withProject(onlyProjectOwner(forwardGetRequest(profiler)))))))
 	// misc

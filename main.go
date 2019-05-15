@@ -27,6 +27,7 @@ var (
 	key      string
 	dbdsn    string
 	pocoweb  string
+	profiler string
 	rName    string
 	rPass    string
 	rEmail   string
@@ -42,6 +43,7 @@ func init() {
 	flag.StringVar(&key, "key", "", "set key file (no tls if omitted)")
 	flag.StringVar(&dbdsn, "db", "", "set mysql connection DSN (user:pass@proto(host)/dbname)")
 	flag.StringVar(&pocoweb, "pocoweb", "", "set host of pocoweb")
+	flag.StringVar(&profiler, "profiler", "", "set host of profiler")
 	flag.StringVar(&rName, "root-name", "", "user name for the root account")
 	flag.StringVar(&rEmail, "root-email", "", "email for the root account")
 	flag.StringVar(&rPass, "root-password", "", "password for the root account")
@@ -138,18 +140,21 @@ func main() {
 	// book management
 	http.HandleFunc("/books", logURL(apih(withAuth( /*cached(*/
 		apiGetPost(
-			forwardGetRequest,
-			onlyRoot(forwardPostRequest)))))) /*)*/
+			forwardGetRequest(pocoweb),
+			onlyRoot(forwardPostRequest(pocoweb))))))) /*)*/
 	http.HandleFunc("/books/", logURL(apih(withAuth( /*cached(*/
 		withProject(onlyProjectOwner(
 			apiGetPostDelete(
-				forwardGetRequest,
-				forwardPostRequest,
-				forwardDeleteRequest))))))) /*)*/
+				forwardGetRequest(pocoweb),
+				forwardPostRequest(pocoweb),
+				forwardDeleteRequest(pocoweb)))))))) /*)*/
+	// profiling
+	http.HandleFunc("/profile/",
+		logURL(apih(apiGet(withProject(onlyProjectOwner(forwardGetRequest(profiler)))))))
 	// misc
 	http.HandleFunc(api.VersionURL, apih(apiGet(getVersion)))
 	http.HandleFunc("/profiler-languages", logURL(apih( /*cached(*/
-		apiGet(forwardGetRequest)))) /*)*/
+		apiGet(forwardGetRequest(pocoweb))))) /*)*/
 
 	log.Infof("listening on %s", host)
 	if cert != "" && key != "" {
@@ -538,60 +543,66 @@ func drain(res *http.Response) {
 	io.Copy(ioutil.Discard, res.Body)
 }
 
-func forwardGetRequest(r *request) (interface{}, error) {
-	url := r.forwardURL()
-	log.Debugf("forwarding request: GET %s", url)
-	res, err := client.Get(url)
-	if err != nil {
-		return nil, internalServerError("cannot forward get request: %v", err)
+func forwardGetRequest(base string) func(r *request) (interface{}, error) {
+	return func(r *request) (interface{}, error) {
+		url := r.forwardURL(base)
+		log.Debugf("forwarding request: GET %s", url)
+		res, err := client.Get(url)
+		if err != nil {
+			return nil, internalServerError("cannot forward get request: %v", err)
+		}
+		log.Debugf("got answer from forward request")
+		if !api.IsValidJSONResponse(res, http.StatusOK) {
+			drain(res)
+			return nil, errorFromCode(res.StatusCode, "bad response [%s]",
+				res.Header.Get("Content-Type"))
+		}
+		return res.Body, nil
 	}
-	log.Debugf("got answer from forward request")
-	if !api.IsValidJSONResponse(res, http.StatusOK) {
-		drain(res)
-		return nil, errorFromCode(res.StatusCode, "bad response [%s]",
-			res.Header.Get("Content-Type"))
-	}
-	return res.Body, nil
 }
 
-func forwardPostRequest(r *request) (interface{}, error) {
-	url := r.forwardURL()
-	log.Infof("forwarding request: POST %s", url)
-	res, err := client.Post(url, r.r.Header.Get("Content-Type"), r.r.Body)
-	if err != nil {
-		return nil, internalServerError("cannot forward post request: %v", err)
+func forwardPostRequest(base string) func(r *request) (interface{}, error) {
+	return func(r *request) (interface{}, error) {
+		url := r.forwardURL(base)
+		log.Infof("forwarding request: POST %s", url)
+		res, err := client.Post(url, r.r.Header.Get("Content-Type"), r.r.Body)
+		if err != nil {
+			return nil, internalServerError("cannot forward post request: %v", err)
+		}
+		log.Debugf("got answer from forward request")
+		if !api.IsValidJSONResponse(res, http.StatusOK, http.StatusCreated) {
+			drain(res)
+			return nil, errorFromCode(res.StatusCode, "bad response [%s]",
+				res.Header.Get("Content-Type"))
+		}
+		return res.Body, nil
 	}
-	log.Debugf("got answer from forward request")
-	if !api.IsValidJSONResponse(res, http.StatusOK, http.StatusCreated) {
-		drain(res)
-		return nil, errorFromCode(res.StatusCode, "bad response [%s]",
-			res.Header.Get("Content-Type"))
-	}
-	return res.Body, nil
 }
 
-func forwardDeleteRequest(r *request) (interface{}, error) {
-	url := r.forwardURL()
-	log.Debugf("forwarding request: DELETE %s", url)
-	req, err := http.NewRequest(http.MethodDelete, url, nil)
-	if err != nil {
-		return nil, internalServerError("cannot forward delete request: %v", err)
+func forwardDeleteRequest(base string) func(r *request) (interface{}, error) {
+	return func(r *request) (interface{}, error) {
+		url := r.forwardURL(base)
+		log.Debugf("forwarding request: DELETE %s", url)
+		req, err := http.NewRequest(http.MethodDelete, url, nil)
+		if err != nil {
+			return nil, internalServerError("cannot forward delete request: %v", err)
+		}
+		res, err := client.Do(req)
+		if err != nil {
+			return nil, internalServerError("cannot forward post request: %v", err)
+		}
+		if res.StatusCode != http.StatusOK {
+			drain(res)
+			return nil, errorFromCode(res.StatusCode, "bad response from backend")
+		}
+		return nil, nil
 	}
-	res, err := client.Do(req)
-	if err != nil {
-		return nil, internalServerError("cannot forward post request: %v", err)
-	}
-	if res.StatusCode != http.StatusOK {
-		drain(res)
-		return nil, errorFromCode(res.StatusCode, "bad response from backend")
-	}
-	return nil, nil
 }
 
 // just handle api-version once
 func getVersion(r *request) (interface{}, error) {
 	if version.Version == "" {
-		v, err := forwardGetRequest(r)
+		v, err := forwardGetRequest(pocoweb)(r)
 		if err != nil {
 			return nil, internalServerError("cannot get api-version: %v", err)
 		}
@@ -605,11 +616,11 @@ func getVersion(r *request) (interface{}, error) {
 	return version, nil
 }
 
-func (r *request) forwardURL() string {
+func (r *request) forwardURL(base string) string {
 	url := r.r.URL.String()
 	i := strings.LastIndex(url, "?")
 	if i == -1 {
-		return fmt.Sprintf("%s%s?userid=%d", pocoweb, url, r.s.User.ID)
+		return fmt.Sprintf("%s%s?userid=%d", base, url, r.s.User.ID)
 	}
-	return fmt.Sprintf("%s%s&userid=%d", pocoweb, url, r.s.User.ID)
+	return fmt.Sprintf("%s%s&userid=%d", base, url, r.s.User.ID)
 }

@@ -5,7 +5,7 @@ PORTS ?= 8080:80
 default: docker-run
 
 pcwauth: main.go
-	go build .
+	CGO_ENABLED=0 go build .
 
 .PHONY: docker-build
 docker-build: Dockerfile pcwauth

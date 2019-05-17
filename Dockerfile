@@ -1,4 +1,4 @@
-FROM golang:latest
+FROM golang:alpine
 MAINTAINER Florian Fink <finkf@cis.lmu.de>
 ENV DATE='Fri 17 May 2019 12:22:42 PM CEST'
 

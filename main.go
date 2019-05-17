@@ -1,31 +1,29 @@
 package main // import "github.com/finkf/pcwauth"
 
 import (
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"regexp"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/finkf/pcwgo/api"
 	"github.com/finkf/pcwgo/db"
+	"github.com/finkf/pcwgo/service"
 	_ "github.com/go-sql-driver/mysql"
 	log "github.com/sirupsen/logrus"
 )
 
 var (
-	database *sql.DB
 	host     string
 	cert     string
 	key      string
-	dbdsn    string
+	dsn      string
 	pocoweb  string
 	profiler string
 	rName    string
@@ -34,6 +32,7 @@ var (
 	rInst    string
 	debug    bool
 	version  api.Version
+	vonce    sync.Once
 	client   *http.Client
 )
 
@@ -41,7 +40,7 @@ func init() {
 	flag.StringVar(&host, "listen", ":8080", "set listening host")
 	flag.StringVar(&cert, "cert", "", "set cert file (no tls if omitted)")
 	flag.StringVar(&key, "key", "", "set key file (no tls if omitted)")
-	flag.StringVar(&dbdsn, "db", "", "set mysql connection DSN (user:pass@proto(host)/dbname)")
+	flag.StringVar(&dsn, "dsn", "", "set mysql connection DSN (user:pass@proto(host)/dbname)")
 	flag.StringVar(&pocoweb, "pocoweb", "", "set host of pocoweb")
 	flag.StringVar(&profiler, "profiler", "", "set host of profiler")
 	flag.StringVar(&rName, "root-name", "", "user name for the root account")
@@ -65,99 +64,77 @@ type request struct {
 
 func must(err error) {
 	if err != nil {
-		log.Errorf("error: %v", err)
-		os.Exit(1)
+		log.Fatalf("error: %v", err)
 	}
 }
 
-func setupDatabase() error {
-	var err error
-	log.Debugf("connecting to db using: %s", dbdsn)
-	database, err = sql.Open("mysql", dbdsn)
-	if err != nil {
-		return fmt.Errorf("cannot connect to database: %v", err)
-	}
-	if err = database.Ping(); err != nil {
-		return fmt.Errorf("cannot ping database: %v", err)
-	}
-	database.SetMaxOpenConns(100)
-	database.SetConnMaxLifetime(100)
-	database.SetMaxIdleConns(10)
-
-	if rPass == "" || rEmail == "" || rName == "" {
-		return nil
-	}
-	return insertUser()
-}
-
-func insertUser() error {
+func insertRoot() error {
 	root := api.User{
 		Name:      rName,
 		Email:     rEmail,
 		Institute: rInst,
 		Admin:     true,
 	}
-	_, found, err := db.FindUserByEmail(database, root.Email)
+	_, found, err := db.FindUserByEmail(service.Pool(), root.Email)
 	if err != nil {
 		return fmt.Errorf("cannot find user %s: %v", root, err)
 	}
 	if found { // root allready exists
 		return nil
 	}
-	if err = db.InsertUser(database, &root); err != nil {
+	if err = db.InsertUser(service.Pool(), &root); err != nil {
 		return fmt.Errorf("cannot create user %s: %v", root, err)
 	}
-	if err := db.SetUserPassword(database, root, rPass); err != nil {
+	if err := db.SetUserPassword(service.Pool(), root, rPass); err != nil {
 		return fmt.Errorf("cannot set password for %s: %v", root, err)
 	}
 	return nil
 }
 
 func main() {
+	// flags
 	flag.Parse()
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
-	must(setupDatabase())
-	defer database.Close()
+	// database
+	must(service.Init(dsn))
+	defer service.Close()
+	// root
+	if rName != "" && rEmail != "" && rPass != "" {
+		must(insertRoot())
+	}
 	// login
-	http.HandleFunc(api.LoginURL, logURL(apih(apiGetPost(
-		withAuth(getLogin),
-		postLogin))))
-	http.HandleFunc(api.LogoutURL, logURL(apih(apiGetPost(
-		withAuth(getLogout),
-		postLogin))))
+	http.HandleFunc(api.LoginURL,
+		service.WithLog(service.WithMethods(
+			http.MethodGet, service.WithAuth(getLogin()),
+			http.MethodPost, postLogin())))
+	http.HandleFunc(api.LogoutURL, service.WithLog(service.WithMethods(
+		http.MethodGet, service.WithAuth(getLogout()))))
 	// user management
-	http.HandleFunc("/users", logURL(apih(withAuth(onlyRoot(
-		apiGetPost(
-			getUser,
-			withUser(postUser)))))))
-	http.HandleFunc("/users/", logURL(apih(withAuth(withUserID(rootOrSelf(
-		apiGetPutDelete(
-			getUser,
-			withUser(putUser),
-			deleteUser)))))))
+	http.HandleFunc("/users", service.WithLog(service.WithMethods(
+		http.MethodPost, service.WithAuth(root(withPostUser(postUser()))),
+		http.MethodGet, service.WithAuth(root(getAllUsers())))))
+	http.HandleFunc("/users/", service.WithLog(service.WithMethods(
+		http.MethodGet, service.WithAuth(withUserID(rootOrSelf(getUser()))),
+		http.MethodPut, service.WithAuth(withPostUser(withUserID(rootOrSelf(putUser())))),
+		http.MethodDelete, service.WithAuth(withUserID(rootOrSelf(deleteUser()))))))
 	// book management
-	http.HandleFunc("/books", logURL(apih(withAuth( /*cached(*/
-		apiGetPost(
-			forwardGetRequest(pocoweb),
-			onlyRoot(forwardPostRequest(pocoweb))))))) /*)*/
-	http.HandleFunc("/books/", logURL(apih(withAuth( /*cached(*/
-		withProject(onlyProjectOwner(
-			apiGetPostDelete(
-				forwardGetRequest(pocoweb),
-				forwardPostRequest(pocoweb),
-				forwardDeleteRequest(pocoweb)))))))) /*)*/
+	http.HandleFunc("/books", service.WithLog(service.WithMethods(
+		http.MethodGet, service.WithAuth(forward(pocoweb)),
+		http.MethodPost, service.WithAuth(forward(pocoweb)))))
+	http.HandleFunc("/books/", service.WithLog(service.WithMethods(
+		http.MethodGet, service.WithAuth(service.WithProject(projectOwner(forward(pocoweb)))),
+		http.MethodPost, service.WithAuth(service.WithProject(projectOwner(forward(pocoweb)))),
+		http.MethodDelete, service.WithAuth(service.WithProject(projectOwner(forward(pocoweb)))))))
 	// profiling
-	http.HandleFunc("/profile/languages",
-		logURL(apih(apiGet(forwardGetRequest(profiler)))))
-	http.HandleFunc("/profile/",
-		logURL(apih(apiGet(withProject(onlyProjectOwner(forwardGetRequest(profiler)))))))
-	// misc
-	http.HandleFunc(api.VersionURL, apih(apiGet(getVersion)))
-	http.HandleFunc("/profiler-languages", logURL(apih( /*cached(*/
-		apiGet(forwardGetRequest(pocoweb))))) /*)*/
-
+	http.HandleFunc("/profile/languages", service.WithLog(service.WithMethods(
+		http.MethodGet, forward(profiler))))
+	http.HandleFunc("/profile/", service.WithLog(service.WithMethods(
+		http.MethodGet, service.WithProject(projectOwner(forward(profiler))))))
+	// version
+	http.HandleFunc(api.VersionURL, service.WithMethods(
+		http.MethodGet, getVersion()))
 	log.Infof("listening on %s", host)
 	if cert != "" && key != "" {
 		must(http.ListenAndServeTLS(host, cert, key, nil))
@@ -166,463 +143,306 @@ func main() {
 	}
 }
 
-type hf func(http.ResponseWriter, *http.Request)
-
-func logURL(f hf) hf {
-	return func(w http.ResponseWriter, r *http.Request) {
-		log.Infof("handling %s %s", r.Method, r.URL)
-		f(w, r)
-		log.Debugf("handled %s %s [%v]", r.Method, r.URL, w.Header().Get("Content-Type"))
+func root(f service.HandlerFunc) service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		log.Debugf("root: %s", d.Session.User)
+		if !d.Session.User.Admin {
+			service.ErrorResponse(w, http.StatusForbidden,
+				"only root allowed to access: %s", d.Session.User)
+			return
+		}
+		f(w, r, d)
 	}
 }
 
-type apifunc func(*request) (interface{}, error)
+func rootOrSelf(f service.HandlerFunc) service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		log.Debugf("rootOrSelf: %s", d.Session.User)
+		if !d.Session.User.Admin && int64(d.ID) != d.Session.User.ID {
+			service.ErrorResponse(w, http.StatusForbidden,
+				"not allowed to access: %s", d.Session.User)
+			return
+		}
+		f(w, r, d)
+	}
+}
 
-func apih(f apifunc) hf {
-	return func(w http.ResponseWriter, r *http.Request) {
-		req := request{r: r}
-		res, err := f(&req)
+func projectOwner(f service.HandlerFunc) service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		log.Debugf("projectOwner: user: %s; owner: %s", d.Session.User, d.Project.Owner)
+		if d.Session.User.ID != d.Project.Owner.ID {
+			service.ErrorResponse(w, http.StatusForbidden,
+				"not allowed to access project: %d", d.Project.ProjectID)
+			return
+		}
+		f(w, r, d)
+	}
+}
+
+func withUserID(f service.HandlerFunc) service.HandlerFunc {
+	re := regexp.MustCompile(`/users/(\d+)`)
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		if err := service.ParseIDs(r.URL.String(), re, &d.ID); err != nil {
+			service.ErrorResponse(w, http.StatusNotFound,
+				"invalid user id: %v", err)
+			return
+		}
+		log.Debugf("withUserID: %d", d.ID)
+		f(w, r, d)
+	}
+}
+
+func withPostUser(f service.HandlerFunc) service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		var data api.CreateUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			service.ErrorResponse(w, http.StatusBadRequest,
+				"cannot read user: invalid data: %v", err)
+			return
+		}
+		log.Debugf("withPostUser: %s", data.User)
+		d.Post = data
+		f(w, r, d)
+	}
+}
+
+func postLogin() service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		var data api.LoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			service.ErrorResponse(w, http.StatusBadRequest,
+				"cannot login: invalid login data")
+			return
+		}
+
+		user, found, err := db.FindUserByEmail(service.Pool(), data.Email)
 		if err != nil {
-			apiError(w, err)
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"cannot login: %v", err)
 			return
 		}
-		if r, ok := res.(io.ReadCloser); ok {
-			defer r.Close()
-			apiForward(w, r)
+		if !found {
+			service.ErrorResponse(w, http.StatusNotFound,
+				"cannot login: no such user: %s", data.Email)
 			return
 		}
-		apiJSON(w, res)
+
+		log.Infof("login request for user: %s", user)
+		if err = db.AuthenticateUser(service.Pool(), user, data.Password); err != nil {
+			service.ErrorResponse(w, http.StatusForbidden,
+				"cannot login: invalid password: %v", err)
+			return
+		}
+		if err = db.DeleteSessionByUserID(service.Pool(), user.ID); err != nil {
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"cannot login: cannot delete session: %v", err)
+			return
+		}
+
+		s, err := db.InsertSession(service.Pool(), user)
+		log.Debugf("login: new session: %s", s)
+		if err != nil {
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"cannot login: cannot insert session: %v", err)
+			return
+		}
+		service.JSONResponse(w, s)
 	}
 }
 
-func apiJSON(w http.ResponseWriter, data interface{}) {
-	if data == nil {
-		return
-	}
-	w.Header()["Content-Type"] = []string{"application/json"}
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// There is no way to handle this error
-		// other than to log it.
-		log.Errorf("cannot encode json: %v", err)
+func getLogin() service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		service.JSONResponse(w, d.Session)
 	}
 }
 
-func apiForward(w http.ResponseWriter, r io.Reader) {
-	if r == nil {
-		return
+func getLogout() service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		log.Debugf("logout session: %s", d.Session)
+		service.RemoveSession(d.Session)
+		if err := db.DeleteSessionByUserID(service.Pool(), d.Session.User.ID); err != nil {
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"cannot logout: cannot delete session: %v", err)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	}
-	// reader must contain JSON encoded data
-	w.Header()["Content-Type"] = []string{"application/json"}
-	n, err := io.Copy(w, r)
+}
+
+func getAllUsers() service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		log.Debugf("get all users")
+		users, err := db.FindAllUsers(service.Pool())
+		if err != nil {
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"cannot list users: %v", err)
+			return
+		}
+		service.JSONResponse(w, api.Users{Users: users})
+	}
+}
+
+func getUser() service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		u, found, err := db.FindUserByID(service.Pool(), int64(d.ID))
+		if err != nil {
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"cannot get user: %v", err)
+			return
+		}
+		if !found {
+			service.ErrorResponse(w, http.StatusNotFound,
+				"cannot get user: not found")
+			return
+		}
+		log.Printf("get user: %s", u)
+		service.JSONResponse(w, u)
+	}
+}
+
+func postUser() service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		t := db.NewTransaction(service.Pool().Begin())
+		u := d.Post.(api.CreateUserRequest)
+		t.Do(func(dtb db.DB) error {
+			if err := db.InsertUser(dtb, &u.User); err != nil {
+				return err
+			}
+			if err := db.SetUserPassword(dtb, u.User, u.Password); err != nil {
+				return fmt.Errorf("cannot set password: %v", err)
+			}
+			return nil
+		})
+		if err := t.Done(); err != nil {
+			service.ErrorResponse(w, http.StatusBadRequest, "cannot create user: %v", err)
+			return
+		}
+		service.JSONResponse(w, u.User)
+	}
+}
+
+func putUser() service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		// this must not fail
+		u := d.Post.(api.CreateUserRequest)
+		t := db.NewTransaction(service.Pool().Begin())
+		t.Do(func(dtb db.DB) error {
+			if err := db.UpdateUser(dtb, u.User); err != nil {
+				return err
+			}
+			if u.Password == "" { // do not update emtpy passwords
+				return nil
+			}
+			if err := db.SetUserPassword(dtb, u.User, u.Password); err != nil {
+				return fmt.Errorf("cannot set password: %v", err)
+			}
+			return nil
+		})
+		if err := t.Done(); err != nil {
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"cannot update user: %v", err)
+			return
+		}
+		service.JSONResponse(w, u.User)
+	}
+}
+
+func deleteUser() service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		// TODO: delete all projects of the particular user
+		if err := db.DeleteUserByID(service.Pool(), int64(d.ID)); err != nil {
+			service.ErrorResponse(w, http.StatusNotFound,
+				"cannot delete user: %v", err)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func forward(base string) service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		url := forwardURL(r.URL.String(), base, d)
+		log.Infof("forwarding [%s] %s -> %s", r.Method, r.URL.String(), url)
+		switch r.Method {
+		case http.MethodGet:
+			res, err := client.Get(url)
+			forwardRequest(w, url, res, err)
+		case http.MethodPost:
+			res, err := client.Post(url, r.Header.Get("Content-Type"), r.Body)
+			forwardRequest(w, url, res, err)
+		case http.MethodDelete:
+			req, err := http.NewRequest(http.MethodDelete, url, nil)
+			if err != nil {
+				service.ErrorResponse(w, http.StatusInternalServerError,
+					"cannot forward: %v", err)
+				return
+			}
+			res, err := client.Do(req)
+			forwardRequest(w, url, res, err)
+		default:
+			service.ErrorResponse(w, http.StatusBadRequest,
+				"cannot forward: invalid method: %s", r.Method)
+		}
+	}
+}
+
+func forwardRequest(w http.ResponseWriter, url string, res *http.Response, err error) {
 	if err != nil {
-		log.Errorf("could not forward: %v", err)
+		service.ErrorResponse(w, http.StatusInternalServerError,
+			"cannot forward request: %s", err)
+		return
+	}
+	defer res.Body.Close()
+	if !service.IsValidStatus(res, http.StatusOK, http.StatusCreated) {
+		io.Copy(ioutil.Discard, res.Body) // drain body
+		service.ErrorResponse(w, http.StatusInternalServerError,
+			"cannot forward request: invalid response: %s %d", res.Status, res.StatusCode)
+		return
+	}
+	log.Debugf("got answer from forward request")
+	// copy header
+	for k, v := range res.Header {
+		for i := range v {
+			w.Header().Add(k, v[i])
+		}
+	}
+	// copy content
+	n, err := io.Copy(w, res.Body)
+	if err != nil {
+		service.ErrorResponse(w, http.StatusInternalServerError,
+			"cannot forward request: %v", err)
+		return
 	}
 	log.Infof("forwarded %d bytes", n)
 }
 
-// err must not be nil
-func apiError(w http.ResponseWriter, err error) {
-	switch t := err.(type) {
-	case api.ErrorResponse:
-		writeAPIError(w, t)
-	default:
-		writeAPIError(w, internalServerError(err.Error()))
-	}
-}
-
-func writeAPIError(w http.ResponseWriter, err api.ErrorResponse) {
-	log.Errorf("%s [%d %s]", err.Cause, err.StatusCode, err.Status)
-	http.Error(w, err.Error(), err.StatusCode)
-	apiJSON(w, err)
-}
-
-func apiGetPostPutDelete(get, post, put, delete apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		switch r.r.Method {
-		case http.MethodGet:
-			return get(r)
-		case http.MethodPost:
-			return post(r)
-		case http.MethodPut:
-			return put(r)
-		case http.MethodDelete:
-			return delete(r)
-		default:
-			return nil, methodNotAllowed("invalid method: %s", r.r.Method)
-		}
-	}
-}
-
-func apiGetPostDelete(get, post, delete apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		switch r.r.Method {
-		case http.MethodGet:
-			return get(r)
-		case http.MethodPost:
-			return post(r)
-		case http.MethodDelete:
-			return delete(r)
-		default:
-			return nil, methodNotAllowed("invalid method: %s", r.r.Method)
-		}
-	}
-}
-
-func apiGetPutDelete(get, put, delete apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		switch r.r.Method {
-		case http.MethodGet:
-			return get(r)
-		case http.MethodPut:
-			return put(r)
-		case http.MethodDelete:
-			return delete(r)
-		default:
-			return nil, methodNotAllowed("invalid method: %s", r.r.Method)
-		}
-	}
-}
-
-func apiGetPost(get, post apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		switch r.r.Method {
-		case http.MethodGet:
-			return get(r)
-		case http.MethodPost:
-			return post(r)
-		default:
-			return nil, methodNotAllowed("invalid method: %s", r.r.Method)
-		}
-	}
-}
-
-func apiPost(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		if r.r.Method != http.MethodPost {
-			return nil, methodNotAllowed("invalid method: expected POST")
-		}
-		return f(r)
-	}
-}
-
-func apiGet(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		if r.r.Method != http.MethodGet {
-			return nil, methodNotAllowed("invalid method: expected GET")
-		}
-		return f(r)
-	}
-}
-
-func withAuth(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		if len(r.r.URL.Query()["auth"]) != 1 {
-			return nil, forbidden("missing auth parameter")
-		}
-		auth := r.r.URL.Query()["auth"][0]
-		val, err := authCache.Get(auth)
-		if err != nil {
-			return nil, err
-		}
-		r.s = val.(api.Session)
-		log.Infof("user %s authenticated: %s (expires: %s)",
-			r.s.User, r.s.Auth, time.Unix(r.s.Expires, 0).Format(time.RFC3339))
-		return f(r)
-	}
-}
-
-func onlyRoot(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		if !r.s.User.Admin {
-			return nil, forbidden("not an admin account: %s", r.s.User)
-		}
-		return f(r)
-	}
-}
-
-func rootOrSelf(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		log.Debugf("rootOrSelf: user: %s; id: %d", r.s.User, r.id)
-		if !r.s.User.Admin && r.id != r.s.User.ID {
-			return nil, forbidden("user %s: cannot access user-id: %d",
-				r.s.User, r.id)
-		}
-		return f(r)
-	}
-}
-
-func onlyProjectOwner(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		log.Debugf("onlyProjectOwner: user: %s; owner-id: %d", r.s.User, r.p.Owner.ID)
-		if r.s.User.ID != r.p.Owner.ID {
-			return nil, forbidden("user %s: cannot access project-id: %d", r.s.User, r.p.ID)
-		}
-		return f(r)
-	}
-}
-
-var restProjectIDRegex = regexp.MustCompile(`/books/(\d+)`)
-
-func withProject(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		url := r.r.URL.String()
-		log.Debugf("matching url: %s", url)
-		m := restProjectIDRegex.FindStringSubmatch(url)
-		if m == nil || len(m) != 2 {
-			return nil, notFound("no such url: %s [%v]", url, m)
-		}
-		id, _ := strconv.ParseInt(m[1], 10, 64)
-		p, err := getProjectCache(id)
-		if err != nil {
-			return nil, internalServerError("cannot load project-id: %d: %v", id, err)
-		}
-		r.p = p
-		return f(r)
-	}
-}
-
-var restUserIDRegex = regexp.MustCompile(`/users/(\d+)?`)
-
-func withUserID(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		url := r.r.URL.String()
-		m := restUserIDRegex.FindStringSubmatch(url)
-		if m == nil || len(m) != 2 {
-			return nil, notFound("no such url: %s", url)
-		}
-		r.id, _ = strconv.ParseInt(m[1], 10, 64)
-		log.Debugf("with user-id: %d", r.id)
-		return f(r)
-	}
-}
-
-func withUser(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		var data api.CreateUserRequest
-		if err := json.NewDecoder(r.r.Body).Decode(&data); err != nil {
-			return nil, badRequest("invalid post data: %v", err)
-		}
-		log.Debugf("with user-data: %s", data.User)
-		r.d = data
-		return f(r)
-	}
-}
-
-func cached(f apifunc) apifunc {
-	return func(r *request) (interface{}, error) {
-		if r.r.Method == http.MethodGet {
-			return getAPICache(r, f)
-		}
-		// Post, Put or Delete: clear all caches
-		log.Debugf("%s: purging caches", r.r.Method)
-		purgeAuthCache()
-		purgeProjectCache()
-		purgeAPICache(r)
-		return f(r)
-	}
-}
-
-func postLogin(r *request) (interface{}, error) {
-	var data api.LoginRequest
-	if err := json.NewDecoder(r.r.Body).Decode(&data); err != nil {
-		return nil, badRequest("invalid login data for user: %s",
-			data.Email)
-	}
-	user, found, err := db.FindUserByEmail(database, data.Email)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, notFound("cannot find user: %s", data.Email)
-	}
-
-	log.Infof("login request for user: %s", user)
-	if err = db.AuthenticateUser(database, user, data.Password); err != nil {
-		return nil, forbidden("invalid password for user: %s: %v", data.Email, err)
-	}
-	if err = db.DeleteSessionByUserID(database, user.ID); err != nil {
-		return nil, fmt.Errorf("cannot delete user: %s: %v", user, err)
-	}
-
-	s, err := db.InsertSession(database, user)
-	log.Debugf("login: new session: %s", s)
-	if err != nil {
-		return nil, err
-	}
-	putAuthCache(s)
-	return s, nil
-}
-
-func getLogin(r *request) (interface{}, error) {
-	log.Debugf("session: %s", r.s)
-	return r.s.User, nil
-}
-
-func getLogout(r *request) (interface{}, error) {
-	log.Debugf("session: %s", r.s)
-	authCache.Remove(r.s.Auth)
-	if err := db.DeleteSessionByUserID(database, r.s.User.ID); err != nil {
-		return nil, fmt.Errorf("cannot delete session: %s: %v", r.s, err)
-	}
-	return nil, nil
-}
-
-func getUser(r *request) (interface{}, error) {
-	if r.id == 0 { // list all users (root only)
-		log.Debugf("get all users")
-		users, err := db.FindAllUsers(database)
-		return api.Users{Users: users}, err
-	}
-	// list self user
-	u, found, err := db.FindUserByID(database, r.id)
-	if err != nil {
-		return api.User{}, internalServerError("cannot find user-id: %d: %v",
-			r.id, err)
-	}
-	if !found {
-		return api.User{}, notFound("cannnot find user-id: %d", r.id)
-	}
-	log.Printf("get user: %s", u)
-	return u, nil
-}
-
-func postUser(r *request) (interface{}, error) {
-	// this must not fail
-	data := r.d.(api.CreateUserRequest)
-	t := db.NewTransaction(database.Begin())
-	t.Do(func(database db.DB) error {
-		if err := db.InsertUser(database, &data.User); err != nil {
-			return badRequest("cannot create new user: %v", err)
-		}
-		return nil
-	})
-	t.Do(func(database db.DB) error {
-		if err := db.SetUserPassword(database, data.User, data.Password); err != nil {
-			return badRequest("cannot set password: %v", err)
-		}
-		return nil
-	})
-	return data.User, t.Done()
-}
-
-func putUser(r *request) (interface{}, error) {
-	// this must not fail
-	data := r.d.(api.CreateUserRequest)
-	t := db.NewTransaction(database.Begin())
-	t.Do(func(database db.DB) error {
-		if err := db.UpdateUser(database, data.User); err != nil {
-			return err
-		}
-		return nil
-	})
-	t.Do(func(database db.DB) error {
-		if data.Password == "" { // do not update emtpy passwords
-			return nil
-		}
-		if err := db.SetUserPassword(database, data.User, data.Password); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err := t.Done(); err != nil {
-		return nil, err
-	}
-	r.s.User = data.User
-	putAuthCache(r.s)
-	return r.s.User, nil
-}
-
-func deleteUser(r *request) (interface{}, error) {
-	// TODO: delete all projects of the particular user
-	if err := db.DeleteUserByID(database, r.id); err != nil {
-		return nil, notFound("cannot delete user-id: %d: %v", r.id, err)
-	}
-	return nil, nil
-}
-
-func drain(res *http.Response) {
-	defer res.Body.Close()
-	io.Copy(ioutil.Discard, res.Body)
-}
-
-func forwardGetRequest(base string) func(r *request) (interface{}, error) {
-	return func(r *request) (interface{}, error) {
-		url := r.forwardURL(base)
-		log.Debugf("forwarding request: GET %s", url)
-		res, err := client.Get(url)
-		if err != nil {
-			return nil, internalServerError("cannot forward get request: %v", err)
-		}
-		log.Debugf("got answer from forward request")
-		if !api.IsValidJSONResponse(res, http.StatusOK) {
-			drain(res)
-			return nil, errorFromCode(res.StatusCode, "bad response [%s]",
-				res.Header.Get("Content-Type"))
-		}
-		return res.Body, nil
-	}
-}
-
-func forwardPostRequest(base string) func(r *request) (interface{}, error) {
-	return func(r *request) (interface{}, error) {
-		url := r.forwardURL(base)
-		log.Infof("forwarding request: POST %s", url)
-		res, err := client.Post(url, r.r.Header.Get("Content-Type"), r.r.Body)
-		if err != nil {
-			return nil, internalServerError("cannot forward post request: %v", err)
-		}
-		log.Debugf("got answer from forward request")
-		if !api.IsValidJSONResponse(res, http.StatusOK, http.StatusCreated) {
-			drain(res)
-			return nil, errorFromCode(res.StatusCode, "bad response [%s]",
-				res.Header.Get("Content-Type"))
-		}
-		return res.Body, nil
-	}
-}
-
-func forwardDeleteRequest(base string) func(r *request) (interface{}, error) {
-	return func(r *request) (interface{}, error) {
-		url := r.forwardURL(base)
-		log.Debugf("forwarding request: DELETE %s", url)
-		req, err := http.NewRequest(http.MethodDelete, url, nil)
-		if err != nil {
-			return nil, internalServerError("cannot forward delete request: %v", err)
-		}
-		res, err := client.Do(req)
-		if err != nil {
-			return nil, internalServerError("cannot forward post request: %v", err)
-		}
-		if res.StatusCode != http.StatusOK {
-			drain(res)
-			return nil, errorFromCode(res.StatusCode, "bad response from backend")
-		}
-		return nil, nil
-	}
-}
-
 // just handle api-version once
-func getVersion(r *request) (interface{}, error) {
-	if version.Version == "" {
-		v, err := forwardGetRequest(pocoweb)(r)
-		if err != nil {
-			return nil, internalServerError("cannot get api-version: %v", err)
-		}
-		body := v.(io.ReadCloser)
-		defer body.Close()
-		if err := json.NewDecoder(body).Decode(&version); err != nil {
-			return nil, internalServerError("cannot read version: %v", err)
-		}
-		body.Close()
+// TODO: use once
+func getVersion() service.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		vonce.Do(func() {
+			url := pocoweb + "/api-version"
+			res, err := client.Get(url)
+			if err != nil {
+				log.Errorf("cannot get api version: %s", err)
+				return
+			}
+			defer res.Body.Close()
+			if err := json.NewDecoder(res.Body).Decode(&version); err != nil {
+				log.Errorf("cannot get api version: cannot decode json: %s", err)
+			}
+		})
+		service.JSONResponse(w, version)
 	}
-	return version, nil
 }
 
-func (r *request) forwardURL(base string) string {
-	url := r.r.URL.String()
+func forwardURL(url, base string, d *service.Data) string {
+	if d == nil || d.Session == nil {
+		return fmt.Sprintf("%s%s", base, url)
+	}
 	i := strings.LastIndex(url, "?")
 	if i == -1 {
-		return fmt.Sprintf("%s%s?userid=%d", base, url, r.s.User.ID)
+		return fmt.Sprintf("%s%s?userid=%d", base, url, d.Session.User.ID)
 	}
-	return fmt.Sprintf("%s%s&userid=%d", base, url, r.s.User.ID)
+	return fmt.Sprintf("%s%s&userid=%d", base, url, d.Session.User.ID)
 }

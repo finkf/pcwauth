@@ -1,3 +1,3 @@
 # pcwauth
 
-Authentification for pocoweb.
+Authentification for [pocoweb](https://github.com/cisocrgroup/pocoweb).

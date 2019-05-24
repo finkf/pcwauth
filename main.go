@@ -129,7 +129,8 @@ func rootOrSelf(f service.HandlerFunc) service.HandlerFunc {
 
 func projectOwner(f service.HandlerFunc) service.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
-		log.Debugf("projectOwner: user: %s; owner: %s", d.Session.User, d.Project.Owner)
+		log.Debugf("projectOwner: id: %d, user: %s, owner: %s",
+			d.Project.ProjectID, d.Session.User, d.Project.Owner)
 		if d.Session.User.ID != d.Project.Owner.ID {
 			service.ErrorResponse(w, http.StatusForbidden,
 				"not allowed to access project: %d", d.Project.ProjectID)

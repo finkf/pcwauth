@@ -5,9 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -20,16 +18,13 @@ import (
 )
 
 var (
-	host     string
+	listen   string
 	cert     string
 	key      string
 	dsn      string
 	pocoweb  string
 	profiler string
-	rName    string
-	rPass    string
-	rEmail   string
-	rInst    string
+	users    string
 	debug    bool
 	version  api.Version
 	vonce    sync.Once
@@ -37,16 +32,13 @@ var (
 )
 
 func init() {
-	flag.StringVar(&host, "listen", ":8080", "set listening host")
+	flag.StringVar(&listen, "listen", ":8080", "set listening host")
 	flag.StringVar(&cert, "cert", "", "set cert file (no tls if omitted)")
 	flag.StringVar(&key, "key", "", "set key file (no tls if omitted)")
 	flag.StringVar(&dsn, "dsn", "", "set mysql connection DSN (user:pass@proto(host)/dbname)")
 	flag.StringVar(&pocoweb, "pocoweb", "", "set host of pocoweb")
-	flag.StringVar(&profiler, "profiler", "", "set host of profiler")
-	flag.StringVar(&rName, "root-name", "", "user name for the root account")
-	flag.StringVar(&rEmail, "root-email", "", "email for the root account")
-	flag.StringVar(&rPass, "root-password", "", "password for the root account")
-	flag.StringVar(&rInst, "root-institute", "", "institute for the root account")
+	flag.StringVar(&profiler, "profiler", "", "set host of pcwprofiler")
+	flag.StringVar(&users, "users", "", "set host of pcwusers")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	client = &http.Client{Transport: &http.Transport{
 		MaxIdleConnsPerHost: 1024,
@@ -54,41 +46,10 @@ func init() {
 	}}
 }
 
-type request struct {
-	r  *http.Request // request
-	s  api.Session   // session
-	p  *db.Project   // the project
-	d  interface{}   // post or put data
-	id int64         // active ID
-}
-
 func must(err error) {
 	if err != nil {
 		log.Fatalf("error: %v", err)
 	}
-}
-
-func insertRoot() error {
-	root := api.User{
-		Name:      rName,
-		Email:     rEmail,
-		Institute: rInst,
-		Admin:     true,
-	}
-	_, found, err := db.FindUserByEmail(service.Pool(), root.Email)
-	if err != nil {
-		return fmt.Errorf("cannot find user %s: %v", root, err)
-	}
-	if found { // root allready exists
-		return nil
-	}
-	if err = db.InsertUser(service.Pool(), &root); err != nil {
-		return fmt.Errorf("cannot create user %s: %v", root, err)
-	}
-	if err := db.SetUserPassword(service.Pool(), root, rPass); err != nil {
-		return fmt.Errorf("cannot set password for %s: %v", root, err)
-	}
-	return nil
 }
 
 func main() {
@@ -100,10 +61,6 @@ func main() {
 	// database
 	must(service.Init(dsn))
 	defer service.Close()
-	// root
-	if rName != "" && rEmail != "" && rPass != "" {
-		must(insertRoot())
-	}
 	// login
 	http.HandleFunc(api.LoginURL,
 		service.WithLog(service.WithMethods(
@@ -113,12 +70,12 @@ func main() {
 		http.MethodGet, service.WithAuth(getLogout()))))
 	// user management
 	http.HandleFunc("/users", service.WithLog(service.WithMethods(
-		http.MethodPost, service.WithAuth(root(withPostUser(postUser()))),
-		http.MethodGet, service.WithAuth(root(getAllUsers())))))
+		http.MethodPost, service.WithAuth(root(forward(users))),
+		http.MethodGet, service.WithAuth(root(forward(users))))))
 	http.HandleFunc("/users/", service.WithLog(service.WithMethods(
-		http.MethodGet, service.WithAuth(withUserID(rootOrSelf(getUser()))),
-		http.MethodPut, service.WithAuth(withPostUser(withUserID(rootOrSelf(putUser())))),
-		http.MethodDelete, service.WithAuth(withUserID(rootOrSelf(deleteUser()))))))
+		http.MethodGet, service.WithAuth(rootOrSelf(forward(users))),
+		http.MethodPut, service.WithAuth(rootOrSelf(forward(users))),
+		http.MethodDelete, service.WithAuth(rootOrSelf(forward(users))))))
 	// book management
 	http.HandleFunc("/books", service.WithLog(service.WithMethods(
 		http.MethodGet, service.WithAuth(forward(pocoweb)),
@@ -130,16 +87,19 @@ func main() {
 	// profiling
 	http.HandleFunc("/profile/languages", service.WithLog(service.WithMethods(
 		http.MethodGet, forward(profiler))))
+	http.HandleFunc("/profile/jobs/", service.WithLog(service.WithMethods(
+		http.MethodGet, service.WithAuth(forward(profiler)))))
 	http.HandleFunc("/profile/", service.WithLog(service.WithMethods(
-		http.MethodGet, service.WithProject(projectOwner(forward(profiler))))))
+		http.MethodGet, service.WithAuth(service.WithProject(projectOwner(forward(profiler)))),
+		http.MethodPost, service.WithAuth(service.WithProject(projectOwner(forward(profiler)))))))
 	// version
 	http.HandleFunc(api.VersionURL, service.WithMethods(
 		http.MethodGet, getVersion()))
-	log.Infof("listening on %s", host)
+	log.Infof("listening on %s", listen)
 	if cert != "" && key != "" {
-		must(http.ListenAndServeTLS(host, cert, key, nil))
+		must(http.ListenAndServeTLS(listen, cert, key, nil))
 	} else {
-		must(http.ListenAndServe(host, nil))
+		must(http.ListenAndServe(listen, nil))
 	}
 }
 
@@ -175,33 +135,6 @@ func projectOwner(f service.HandlerFunc) service.HandlerFunc {
 				"not allowed to access project: %d", d.Project.ProjectID)
 			return
 		}
-		f(w, r, d)
-	}
-}
-
-func withUserID(f service.HandlerFunc) service.HandlerFunc {
-	re := regexp.MustCompile(`/users/(\d+)`)
-	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
-		if err := service.ParseIDs(r.URL.String(), re, &d.ID); err != nil {
-			service.ErrorResponse(w, http.StatusNotFound,
-				"invalid user id: %v", err)
-			return
-		}
-		log.Debugf("withUserID: %d", d.ID)
-		f(w, r, d)
-	}
-}
-
-func withPostUser(f service.HandlerFunc) service.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
-		var data api.CreateUserRequest
-		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-			service.ErrorResponse(w, http.StatusBadRequest,
-				"cannot read user: invalid data: %v", err)
-			return
-		}
-		log.Debugf("withPostUser: %s", data.User)
-		d.Post = data
 		f(w, r, d)
 	}
 }
@@ -269,96 +202,6 @@ func getLogout() service.HandlerFunc {
 	}
 }
 
-func getAllUsers() service.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
-		log.Debugf("get all users")
-		users, err := db.FindAllUsers(service.Pool())
-		if err != nil {
-			service.ErrorResponse(w, http.StatusInternalServerError,
-				"cannot list users: %v", err)
-			return
-		}
-		service.JSONResponse(w, api.Users{Users: users})
-	}
-}
-
-func getUser() service.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
-		u, found, err := db.FindUserByID(service.Pool(), int64(d.ID))
-		if err != nil {
-			service.ErrorResponse(w, http.StatusInternalServerError,
-				"cannot get user: %v", err)
-			return
-		}
-		if !found {
-			service.ErrorResponse(w, http.StatusNotFound,
-				"cannot get user: not found")
-			return
-		}
-		log.Printf("get user: %s", u)
-		service.JSONResponse(w, u)
-	}
-}
-
-func postUser() service.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
-		t := db.NewTransaction(service.Pool().Begin())
-		u := d.Post.(api.CreateUserRequest)
-		t.Do(func(dtb db.DB) error {
-			if err := db.InsertUser(dtb, &u.User); err != nil {
-				return err
-			}
-			if err := db.SetUserPassword(dtb, u.User, u.Password); err != nil {
-				return fmt.Errorf("cannot set password: %v", err)
-			}
-			return nil
-		})
-		if err := t.Done(); err != nil {
-			service.ErrorResponse(w, http.StatusBadRequest, "cannot create user: %v", err)
-			return
-		}
-		service.JSONResponse(w, u.User)
-	}
-}
-
-func putUser() service.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
-		// this must not fail
-		u := d.Post.(api.CreateUserRequest)
-		t := db.NewTransaction(service.Pool().Begin())
-		t.Do(func(dtb db.DB) error {
-			if err := db.UpdateUser(dtb, u.User); err != nil {
-				return err
-			}
-			if u.Password == "" { // do not update emtpy passwords
-				return nil
-			}
-			if err := db.SetUserPassword(dtb, u.User, u.Password); err != nil {
-				return fmt.Errorf("cannot set password: %v", err)
-			}
-			return nil
-		})
-		if err := t.Done(); err != nil {
-			service.ErrorResponse(w, http.StatusInternalServerError,
-				"cannot update user: %v", err)
-			return
-		}
-		service.JSONResponse(w, u.User)
-	}
-}
-
-func deleteUser() service.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
-		// TODO: delete all projects of the particular user
-		if err := db.DeleteUserByID(service.Pool(), int64(d.ID)); err != nil {
-			service.ErrorResponse(w, http.StatusNotFound,
-				"cannot delete user: %v", err)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}
-}
-
 func forward(base string) service.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
 		url := forwardURL(r.URL.String(), base, d)
@@ -393,19 +236,13 @@ func forwardRequest(w http.ResponseWriter, url string, res *http.Response, err e
 		return
 	}
 	defer res.Body.Close()
-	if !service.IsValidStatus(res, http.StatusOK, http.StatusCreated) {
-		io.Copy(ioutil.Discard, res.Body) // drain body
-		service.ErrorResponse(w, http.StatusInternalServerError,
-			"cannot forward request: invalid response: %s %d", res.Status, res.StatusCode)
-		return
-	}
-	log.Debugf("got answer from forward request")
-	// copy header
+	log.Debugf("forwarding: %s (Content-Length: %d)", res.Status, res.ContentLength)
 	for k, v := range res.Header {
 		for i := range v {
 			w.Header().Add(k, v[i])
 		}
 	}
+	w.WriteHeader(res.StatusCode)
 	// copy content
 	n, err := io.Copy(w, res.Body)
 	if err != nil {
@@ -417,7 +254,6 @@ func forwardRequest(w http.ResponseWriter, url string, res *http.Response, err e
 }
 
 // just handle api-version once
-// TODO: use once
 func getVersion() service.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
 		vonce.Do(func() {

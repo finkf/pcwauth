@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -13,22 +14,22 @@ import (
 	"github.com/finkf/pcwgo/api"
 	"github.com/finkf/pcwgo/db"
 	"github.com/finkf/pcwgo/service"
-	_ "github.com/go-sql-driver/mysql"
 	log "github.com/sirupsen/logrus"
 )
 
 var (
-	listen   string
-	cert     string
-	key      string
-	dsn      string
-	pocoweb  string
-	profiler string
-	users    string
-	debug    bool
-	version  api.Version
-	vonce    sync.Once
-	client   *http.Client
+	listen         string
+	cert           string
+	key            string
+	dsn            string
+	pocoweb        string
+	profiler       string
+	users          string
+	postcorrection string
+	debug          bool
+	version        api.Version
+	vonce          sync.Once
+	client         *http.Client
 )
 
 func init() {
@@ -39,6 +40,7 @@ func init() {
 	flag.StringVar(&pocoweb, "pocoweb", "", "set host of pocoweb")
 	flag.StringVar(&profiler, "profiler", "", "set host of pcwprofiler")
 	flag.StringVar(&users, "users", "", "set host of pcwusers")
+	flag.StringVar(&postcorrection, "postcorrection", "", "set host of pcwpostcorrection")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	client = &http.Client{Transport: &http.Transport{
 		MaxIdleConnsPerHost: 1024,
@@ -68,7 +70,16 @@ func main() {
 			http.MethodPost, postLogin())))
 	http.HandleFunc(api.LogoutURL, service.WithLog(service.WithMethods(
 		http.MethodGet, service.WithAuth(getLogout()))))
+	// jobs
+	http.HandleFunc("/jobs/", service.WithLog(service.WithMethods(
+		http.MethodGet, service.WithAuth(getJob()))))
+	// postcorrection
+	http.HandleFunc("/postcorrect/el/books/", service.WithLog(service.WithMethods(
+		http.MethodPost, service.WithAuth(
+			service.WithProject(projectOwner(forward(postcorrection)))))))
+
 	// user management
+	// TODO: simplify this
 	http.HandleFunc("/users", service.WithLog(service.WithMethods(
 		http.MethodPost, service.WithAuth(root(forward(users))),
 		http.MethodGet, service.WithAuth(root(forward(users))))))
@@ -200,6 +211,28 @@ func getLogout() service.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+	}
+}
+func getJob() service.HandlerFunc {
+	re := regexp.MustCompile(`/jobs/(\d+)`)
+	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
+		var jobID int
+		if err := service.ParseIDs(r.URL.String(), re, &jobID); err != nil {
+			service.ErrorResponse(w, http.StatusNotFound, "invalid job id")
+			return
+		}
+		status, found, err := db.FindJobByID(service.Pool(), jobID)
+		if err != nil {
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"cannot get job status: %v", err)
+			return
+		}
+		if !found {
+			service.ErrorResponse(w, http.StatusNotFound,
+				"missing job id: %d", jobID)
+			return
+		}
+		service.JSONResponse(w, status)
 	}
 }
 

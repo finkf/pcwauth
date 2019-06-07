@@ -1,11 +1,12 @@
 module github.com/finkf/pcwauth
 
 require (
-	github.com/finkf/pcwgo/api v0.7.0
-	github.com/finkf/pcwgo/db v0.10.0
-	github.com/finkf/pcwgo/service v0.2.1
-	github.com/go-sql-driver/mysql v1.4.1 // indirect
+	github.com/finkf/pcwgo/api v0.9.0
+	github.com/finkf/pcwgo/db v0.12.0
+	github.com/finkf/pcwgo/service v0.2.5
 	github.com/sirupsen/logrus v1.4.2
-	golang.org/x/sys v0.0.0-20190528012530-adf421d2caf4 // indirect
-	google.golang.org/appengine v1.6.0 // indirect
+	github.com/stretchr/objx v0.2.0 // indirect
+	golang.org/x/net v0.0.0-20190606173856-1492cefac77f // indirect
+	golang.org/x/tools v0.0.0-20190606174628-0139d5756a7d // indirect
+	google.golang.org/appengine v1.6.1 // indirect
 )

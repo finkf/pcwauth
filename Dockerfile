@@ -13,6 +13,7 @@ CMD pcwauth \
 	-pocoweb http://pocoweb:8080 \
 	-profiler http://pcwprofiler \
 	-users http://pcwusers \
-    -postcorrection http://pcwpostcorrection \
+	-postcorrection http://pcwpostcorrection \
+	-ocr http://pcwocr \
 	-listen ':80' \
 	-debug

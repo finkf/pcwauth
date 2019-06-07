@@ -26,6 +26,7 @@ var (
 	profiler       string
 	users          string
 	postcorrection string
+	ocr            string
 	debug          bool
 	version        api.Version
 	vonce          sync.Once
@@ -36,11 +37,14 @@ func init() {
 	flag.StringVar(&listen, "listen", ":8080", "set listening host")
 	flag.StringVar(&cert, "cert", "", "set cert file (no tls if omitted)")
 	flag.StringVar(&key, "key", "", "set key file (no tls if omitted)")
-	flag.StringVar(&dsn, "dsn", "", "set mysql connection DSN (user:pass@proto(host)/dbname)")
+	flag.StringVar(&dsn, "dsn", "",
+		"set mysql connection DSN (user:pass@proto(host)/dbname)")
 	flag.StringVar(&pocoweb, "pocoweb", "", "set host of pocoweb")
 	flag.StringVar(&profiler, "profiler", "", "set host of pcwprofiler")
 	flag.StringVar(&users, "users", "", "set host of pcwusers")
-	flag.StringVar(&postcorrection, "postcorrection", "", "set host of pcwpostcorrection")
+	flag.StringVar(&postcorrection, "postcorrection", "",
+		"set host of pcwpostcorrection")
+	flag.StringVar(&ocr, "ocr", "", "set host of pcwocr")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	client = &http.Client{Transport: &http.Transport{
 		MaxIdleConnsPerHost: 1024,
@@ -73,13 +77,26 @@ func main() {
 	// jobs
 	http.HandleFunc("/jobs/", service.WithLog(service.WithMethods(
 		http.MethodGet, service.WithAuth(getJob()))))
+	// ocr
+	http.HandleFunc("/ocr/", service.WithLog(service.WithMethods(
+		http.MethodGet, service.WithAuth(forward(ocr)))))
+	http.HandleFunc("/ocr/books/", service.WithLog(service.WithMethods(
+		http.MethodPost, service.WithAuth(
+			service.WithProject(projectOwner(forward(ocr)))),
+		http.MethodGet, service.WithAuth(
+			service.WithProject(projectOwner(forward(ocr)))))))
 	// postcorrection
 	http.HandleFunc("/postcorrect/el/books/", service.WithLog(service.WithMethods(
 		http.MethodPost, service.WithAuth(
+			service.WithProject(projectOwner(forward(postcorrection)))),
+		http.MethodGet, service.WithAuth(
 			service.WithProject(projectOwner(forward(postcorrection)))))))
-
+	http.HandleFunc("/postcorrect/rrdm/books/", service.WithLog(service.WithMethods(
+		http.MethodPost, service.WithAuth(
+			service.WithProject(projectOwner(forward(postcorrection)))),
+		http.MethodGet, service.WithAuth(
+			service.WithProject(projectOwner(forward(postcorrection)))))))
 	// user management
-	// TODO: simplify this
 	http.HandleFunc("/users", service.WithLog(service.WithMethods(
 		http.MethodPost, service.WithAuth(root(forward(users))),
 		http.MethodGet, service.WithAuth(root(forward(users))))))
@@ -127,9 +144,17 @@ func root(f service.HandlerFunc) service.HandlerFunc {
 }
 
 func rootOrSelf(f service.HandlerFunc) service.HandlerFunc {
+	re := regexp.MustCompile(`/users/(\d+)`)
 	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
 		log.Debugf("rootOrSelf: %s", d.Session.User)
-		if !d.Session.User.Admin && int64(d.ID) != d.Session.User.ID {
+		var uid int
+		if n := service.ParseIDs(r.URL.String(), re, &uid); n == 0 {
+			service.ErrorResponse(w, http.StatusNotFound,
+				"cannot find: %s", r.URL.String())
+			return
+		}
+		log.Debugf("user id: %d", uid)
+		if !d.Session.User.Admin && int64(uid) != d.Session.User.ID {
 			service.ErrorResponse(w, http.StatusForbidden,
 				"not allowed to access: %s", d.Session.User)
 			return
@@ -213,11 +238,12 @@ func getLogout() service.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 	}
 }
+
 func getJob() service.HandlerFunc {
 	re := regexp.MustCompile(`/jobs/(\d+)`)
 	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
 		var jobID int
-		if err := service.ParseIDs(r.URL.String(), re, &jobID); err != nil {
+		if n := service.ParseIDs(r.URL.String(), re, &jobID); n == 0 {
 			service.ErrorResponse(w, http.StatusNotFound, "invalid job id")
 			return
 		}
@@ -227,9 +253,16 @@ func getJob() service.HandlerFunc {
 				"cannot get job status: %v", err)
 			return
 		}
-		if !found {
-			service.ErrorResponse(w, http.StatusNotFound,
-				"missing job id: %d", jobID)
+		q := r.URL.Query().Get("q")
+		if !found || (q != "" && q != status.JobName) {
+			service.JSONResponse(w, api.JobStatus{
+				JobID:      jobID,
+				BookID:     jobID,
+				StatusID:   db.StatusIDEmpty,
+				StatusName: db.StatusEmpty,
+				JobName:    q,
+				Timestamp:  time.Now().Unix(),
+			})
 			return
 		}
 		service.JSONResponse(w, status)
@@ -246,6 +279,15 @@ func forward(base string) service.HandlerFunc {
 			forwardRequest(w, url, res, err)
 		case http.MethodPost:
 			res, err := client.Post(url, r.Header.Get("Content-Type"), r.Body)
+			forwardRequest(w, url, res, err)
+		case http.MethodPut:
+			req, err := http.NewRequest(http.MethodPut, url, r.Body)
+			if err != nil {
+				service.ErrorResponse(w, http.StatusInternalServerError,
+					"cannot forward: %v", err)
+				return
+			}
+			res, err := client.Do(req)
 			forwardRequest(w, url, res, err)
 		case http.MethodDelete:
 			req, err := http.NewRequest(http.MethodDelete, url, nil)

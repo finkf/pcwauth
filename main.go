@@ -80,10 +80,13 @@ func main() {
 	// ocr
 	http.HandleFunc("/ocr/", service.WithLog(service.WithMethods(
 		http.MethodGet, service.WithAuth(forward(ocr)))))
-	http.HandleFunc("/ocr/books/", service.WithLog(service.WithMethods(
+	http.HandleFunc("/ocr/predict/", service.WithLog(service.WithMethods(
 		http.MethodPost, service.WithAuth(
 			service.WithProject(projectOwner(forward(ocr)))),
 		http.MethodGet, service.WithAuth(
+			service.WithProject(projectOwner(forward(ocr)))))))
+	http.HandleFunc("/ocr/train/", service.WithLog(service.WithMethods(
+		http.MethodPost, service.WithAuth(
 			service.WithProject(projectOwner(forward(ocr)))))))
 	// postcorrection
 	http.HandleFunc("/postcorrect/el/books/", service.WithLog(service.WithMethods(

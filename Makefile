@@ -14,7 +14,7 @@ docker-build: Dockerfile pcwauth
 
 .PHONY: docker-run
 docker-run: docker-build
-	${SUDO} docker run -p ${PORTS} ${TAGS}
+	${SUDO} docker run -p ${PORTS} ${TAG}
 
 .PHONY: docker-push
 docker-push: docker-build

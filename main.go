@@ -76,7 +76,7 @@ func main() {
 		http.MethodGet, service.WithAuth(getLogout()))))
 	// jobs
 	http.HandleFunc("/jobs/", service.WithLog(service.WithMethods(
-		http.MethodGet, service.WithIDs(service.WithAuth(getJob())), "jobs")))
+		http.MethodGet, service.WithIDs(service.WithAuth(getJob()), "jobs"))))
 	// ocr
 	http.HandleFunc("/ocr/", service.WithLog(service.WithMethods(
 		http.MethodGet, service.WithAuth(forward(ocr)))))

@@ -1,6 +1,7 @@
 SUDO ?= sudo
 TAG ?= flobar/pcwauth
 PORTS ?= 8080:80
+TAGS := ${addprefix -t${TAG}:,${shell git describe --tags HEAD} latest}
 
 default: docker-run
 
@@ -9,11 +10,11 @@ pcwauth: main.go
 
 .PHONY: docker-build
 docker-build: Dockerfile pcwauth
-	${SUDO} docker build -t ${TAG} .
+	${SUDO} docker build ${TAGS} .
 
 .PHONY: docker-run
 docker-run: docker-build
-	${SUDO} docker run -p ${PORTS} -t ${TAG}
+	${SUDO} docker run -p ${PORTS} ${TAGS}
 
 .PHONY: docker-push
 docker-push: docker-build

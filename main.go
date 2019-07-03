@@ -76,7 +76,7 @@ func main() {
 		http.MethodGet, service.WithAuth(getLogout()))))
 	// jobs
 	http.HandleFunc("/jobs/", service.WithLog(service.WithMethods(
-		http.MethodGet, service.WithAuth(getJob()))))
+		http.MethodGet, service.WithIDs(service.WithAuth(getJob())), "jobs")))
 	// ocr
 	http.HandleFunc("/ocr/", service.WithLog(service.WithMethods(
 		http.MethodGet, service.WithAuth(forward(ocr)))))
@@ -243,17 +243,17 @@ func getLogout() service.HandlerFunc {
 }
 
 func getJob() service.HandlerFunc {
-	re := regexp.MustCompile(`/jobs/(\d+)`)
 	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
-		var jobID int
-		if n := service.ParseIDs(r.URL.String(), re, &jobID); n == 0 {
-			service.ErrorResponse(w, http.StatusNotFound, "invalid job id")
-			return
-		}
+		jobID := d.IDs["jobs"]
 		status, found, err := db.FindJobByID(service.Pool(), jobID)
 		if err != nil {
 			service.ErrorResponse(w, http.StatusInternalServerError,
 				"cannot get job status: %v", err)
+			return
+		}
+		if found && status.StatusID == db.StatusIDFailed { // failed job returns 500
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"job %s failed", status.JobName)
 			return
 		}
 		q := r.URL.Query().Get("q")

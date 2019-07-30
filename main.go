@@ -276,13 +276,13 @@ func getJob() service.HandlerFunc {
 
 var errJobNotFound = errors.New("job not found")
 
-func findJob(pid int) (*api.JobStatus, error) {
+func findJob(jobID int) (*api.JobStatus, error) {
 	// search for the project id mapped to the job/book-ID
 	// (project.origin is joined with jobid in the view)
 	stmt := `select * from job_status_project_view where projectid=?`
-	rows, err := db.Query(service.Pool(), stmt, pid)
+	rows, err := db.Query(service.Pool(), stmt, jobID)
 	if err != nil {
-		return nil, fmt.Errorf("cannot query job id %d: %v", pid, err)
+		return nil, fmt.Errorf("cannot query job id %d: %v", jobID, err)
 	}
 	if !rows.Next() {
 		return nil, errJobNotFound
@@ -291,7 +291,7 @@ func findJob(pid int) (*api.JobStatus, error) {
 	var ts int64
 	var jname, sname string
 	if err := rows.Scan(&jid, &sid, &jname, &ts, &sname); err != nil {
-		return nil, fmt.Errorf("cannot scan job id %d: %v", pid, err)
+		return nil, fmt.Errorf("cannot scan job id %d: %v", jobID, err)
 	}
 	return &api.JobStatus{
 		JobID:      jid,

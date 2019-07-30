@@ -287,10 +287,10 @@ func findJob(jobID int) (*api.JobStatus, error) {
 	if !rows.Next() {
 		return nil, errJobNotFound
 	}
-	var sid, jid int
+	var sid, jid, pid int
 	var ts int64
 	var jname, sname string
-	if err := rows.Scan(&jid, &sid, &jname, &ts, &sname); err != nil {
+	if err := rows.Scan(&jid, &sid, &jname, &ts, &sname, &pid); err != nil {
 		return nil, fmt.Errorf("cannot scan job id %d: %v", jobID, err)
 	}
 	return &api.JobStatus{
@@ -300,6 +300,7 @@ func findJob(jobID int) (*api.JobStatus, error) {
 		StatusName: sname,
 		JobName:    jname,
 		Timestamp:  ts,
+		// TODO: ProjectID:  pid,
 	}, nil
 }
 

@@ -2,6 +2,7 @@ package main // import "github.com/finkf/pcwauth"
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -245,31 +246,61 @@ func getLogout() service.HandlerFunc {
 func getJob() service.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request, d *service.Data) {
 		jobID := d.IDs["jobs"]
-		status, found, err := db.FindJobByID(service.Pool(), jobID)
-		if err != nil {
-			service.ErrorResponse(w, http.StatusInternalServerError,
-				"cannot get job status: %v", err)
-			return
-		}
-		if found && status.StatusID == db.StatusIDFailed { // failed job returns 500
-			service.ErrorResponse(w, http.StatusInternalServerError,
-				"job %s failed", status.JobName)
-			return
-		}
-		q := r.URL.Query().Get("q")
-		if !found || (q != "" && q != status.JobName) {
+		status, err := findJob(jobID)
+		// return not running job if the job does not exist
+		// to indicate that it is ok to run a job
+		if err == errJobNotFound {
 			service.JSONResponse(w, api.JobStatus{
 				JobID:      jobID,
 				BookID:     jobID,
 				StatusID:   db.StatusIDEmpty,
 				StatusName: db.StatusEmpty,
-				JobName:    q,
-				Timestamp:  time.Now().Unix(),
 			})
+			return
+		}
+		if err != nil {
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"cannot get job status: %v", err)
+			return
+		}
+		// failed job returns 500 so caller just needs to handle
+		// http return codes
+		if status.StatusID == db.StatusIDFailed {
+			service.ErrorResponse(w, http.StatusInternalServerError,
+				"job %s failed", status.JobName)
 			return
 		}
 		service.JSONResponse(w, status)
 	}
+}
+
+var errJobNotFound = errors.New("job not found")
+
+func findJob(pid int) (*api.JobStatus, error) {
+	// search for the project id mapped to the job/book-ID
+	// (project.origin is joined with jobid in the view)
+	stmt := `select * from job_status_project_view where projectid=?`
+	rows, err := db.Query(service.Pool(), stmt, pid)
+	if err != nil {
+		return nil, fmt.Errorf("cannot query job id %d: %v", pid, err)
+	}
+	if !rows.Next() {
+		return nil, errJobNotFound
+	}
+	var sid, jid int
+	var ts int64
+	var jname, sname string
+	if err := rows.Scan(&jid, &sid, &jname, &ts, &sname); err != nil {
+		return nil, fmt.Errorf("cannot scan job id %d: %v", pid, err)
+	}
+	return &api.JobStatus{
+		JobID:      jid,
+		BookID:     jid, // always equal to the bookID
+		StatusID:   sid,
+		StatusName: sname,
+		JobName:    jname,
+		Timestamp:  ts,
+	}, nil
 }
 
 func forward(base string) service.HandlerFunc {
